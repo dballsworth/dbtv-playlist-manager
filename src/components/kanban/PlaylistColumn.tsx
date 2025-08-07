@@ -1,18 +1,17 @@
 import React from 'react';
 import { useDroppable } from '@dnd-kit/core';
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { VideoCard } from './VideoCard';
 import type { Video, Playlist } from '../../types';
 import { MoreVertical } from 'lucide-react';
-import { createDragId } from '../../utils/dragUtils';
 
 interface PlaylistColumnProps {
   playlist: Playlist;
   videos: Video[];
-  onRemoveVideo?: (playlistId: string, videoId: string) => void;
+  onRemoveVideo?: (playlistId: string, videoId: string) => Promise<boolean>;
+  onEditVideo?: (video: Video) => void;
 }
 
-export const PlaylistColumn: React.FC<PlaylistColumnProps> = ({ playlist, videos, onRemoveVideo }) => {
+export const PlaylistColumn: React.FC<PlaylistColumnProps> = ({ playlist, videos, onRemoveVideo, onEditVideo }) => {
   const {
     isOver,
     setNodeRef,
@@ -27,11 +26,9 @@ export const PlaylistColumn: React.FC<PlaylistColumnProps> = ({ playlist, videos
     }
   }, [isOver, playlist.name, playlist.id]);
 
-  const videoDragIds = videos.map(v => createDragId(v.id, 'playlist', playlist.id));
-
-  const handleRemoveVideo = (videoId: string) => {
+  const handleRemoveVideo = async (videoId: string) => {
     if (onRemoveVideo) {
-      onRemoveVideo(playlist.id, videoId);
+      await onRemoveVideo(playlist.id, videoId);
     }
   };
 
@@ -47,17 +44,16 @@ export const PlaylistColumn: React.FC<PlaylistColumnProps> = ({ playlist, videos
         ref={setNodeRef}
         className={`column-content ${isOver ? 'drag-over' : ''}`}
       >
-        <SortableContext items={videoDragIds} strategy={verticalListSortingStrategy}>
-          {videos.map((video) => (
-            <VideoCard
-              key={video.id}
-              video={video}
-              sourceType="playlist"
-              sourceId={playlist.id}
-              onRemove={handleRemoveVideo}
-            />
-          ))}
-        </SortableContext>
+        {videos.map((video) => (
+          <VideoCard
+            key={video.id}
+            video={video}
+            sourceType="playlist"
+            sourceId={playlist.id}
+            onRemove={handleRemoveVideo}
+            onEdit={onEditVideo}
+          />
+        ))}
         
         {videos.length === 0 && (
           <div className="empty-playlist">

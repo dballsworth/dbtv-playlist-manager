@@ -3,14 +3,17 @@ import { Upload, X, AlertCircle, CheckCircle, Loader, File } from 'lucide-react'
 import { r2Client } from '../services/r2Client';
 import { useSettings } from '../hooks/useSettings';
 import { useVideoData } from '../hooks/useVideoData';
+import { ThumbnailGenerator } from '../utils/thumbnailGenerator';
 
 interface UploadFile {
   id: string;
   file: File;
   progress: number;
-  status: 'pending' | 'uploading' | 'completed' | 'error';
+  status: 'pending' | 'generating-thumbnail' | 'uploading' | 'completed' | 'error';
   error?: string;
   r2Key?: string;
+  thumbnailR2Key?: string;
+  thumbnailDataUrl?: string;
 }
 
 interface VideoUploadProps {
@@ -64,21 +67,91 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
     return `videos/${timestamp}/${randomId}_${sanitizedName}`;
   };
 
-  const addFiles = (files: FileList | File[]) => {
+  const addFiles = async (files: FileList | File[]) => {
     const { valid, errors } = validateFiles(files);
     
     if (errors.length > 0) {
       alert('Upload errors:\n' + errors.join('\n'));
     }
     
-    const newUploads: UploadFile[] = valid.map(file => ({
-      id: Math.random().toString(36).substring(2),
-      file,
-      progress: 0,
-      status: 'pending'
-    }));
+    const newUploads: UploadFile[] = valid.map(file => {
+      const r2Key = generateR2Key(file.name);
+      return {
+        id: Math.random().toString(36).substring(2),
+        file,
+        progress: 0,
+        status: 'pending',
+        r2Key
+      };
+    });
     
     setUploads(prev => [...prev, ...newUploads]);
+    
+    // Generate thumbnails for the new uploads
+    generateThumbnailsForUploads(newUploads);
+  };
+
+  const generateThumbnailsForUploads = async (uploads: UploadFile[]) => {
+    for (const upload of uploads) {
+      try {
+        // Update status to generating thumbnail
+        setUploads(prev => prev.map(u => 
+          u.id === upload.id 
+            ? { ...u, status: 'generating-thumbnail' }
+            : u
+        ));
+
+        console.log(`🎬 Generating thumbnail for ${upload.file.name}...`);
+        console.log(`📁 Video R2 key: ${upload.r2Key}`);
+        
+        const result = await ThumbnailGenerator.generateThumbnail(upload.file, {
+          targetWidth: 150,
+          quality: 0.8,
+          format: 'jpeg'
+        });
+
+        console.log(`📸 Thumbnail generation result:`, { 
+          success: result.success, 
+          hasDataUrl: !!result.dataUrl, 
+          error: result.error,
+          dimensions: `${result.width}x${result.height}`
+        });
+
+        if (result.success && result.dataUrl) {
+          // Use the pre-generated R2 key for thumbnail
+          const thumbnailR2Key = ThumbnailGenerator.generateThumbnailR2Key(upload.r2Key!, 'jpeg');
+          console.log(`📁 Thumbnail R2 key: ${thumbnailR2Key}`);
+
+          setUploads(prev => prev.map(u => 
+            u.id === upload.id 
+              ? { 
+                  ...u, 
+                  status: 'pending', 
+                  thumbnailDataUrl: result.dataUrl,
+                  thumbnailR2Key 
+                }
+              : u
+          ));
+          
+          console.log(`✅ Thumbnail generated successfully for ${upload.file.name}`);
+        } else {
+          console.error(`❌ Failed to generate thumbnail for ${upload.file.name}:`, result.error);
+          // Still set back to pending so video can be uploaded without thumbnail
+          setUploads(prev => prev.map(u => 
+            u.id === upload.id 
+              ? { ...u, status: 'pending', error: `Thumbnail generation failed: ${result.error}` }
+              : u
+          ));
+        }
+      } catch (error) {
+        console.error(`Failed to generate thumbnail for ${upload.file.name}:`, error);
+        setUploads(prev => prev.map(u => 
+          u.id === upload.id 
+            ? { ...u, status: 'pending' }
+            : u
+        ));
+      }
+    }
   };
 
   const removeUpload = (id: string) => {
@@ -86,11 +159,12 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
   };
 
   const uploadFile = async (upload: UploadFile): Promise<void> => {
-    const r2Key = generateR2Key(upload.file.name);
+    // Use the pre-generated R2 key
+    const r2Key = upload.r2Key!;
     
     setUploads(prev => prev.map(u => 
       u.id === upload.id 
-        ? { ...u, status: 'uploading', progress: 0, r2Key }
+        ? { ...u, status: 'uploading', progress: 0 }
         : u
     ));
 
@@ -100,7 +174,8 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
         r2Client.configure(settings.cloudStorage.r2);
       }
 
-      const result = await r2Client.uploadFile(
+      // Upload video file
+      const videoResult = await r2Client.uploadFile(
         r2Key,
         upload.file,
         {
@@ -112,32 +187,85 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
           },
           onProgress: (progress) => {
             setUploads(prev => prev.map(u => 
-              u.id === upload.id ? { ...u, progress } : u
+              u.id === upload.id ? { ...u, progress: progress * 0.8 } : u // Reserve 20% for thumbnail
             ));
           }
         }
       );
 
-      if (result.success) {
-        // Create video record in the service
-        await createVideoFromUpload({
-          id: upload.id,
-          file: upload.file,
-          r2Key
-        });
-
+      if (!videoResult.success) {
         setUploads(prev => prev.map(u => 
           u.id === upload.id 
-            ? { ...u, status: 'completed', progress: 100 }
+            ? { ...u, status: 'error', error: videoResult.error || 'Video upload failed' }
             : u
         ));
-      } else {
-        setUploads(prev => prev.map(u => 
-          u.id === upload.id 
-            ? { ...u, status: 'error', error: result.error || 'Upload failed' }
-            : u
-        ));
+        return;
       }
+
+      // Upload thumbnail if available and wait for completion
+      let thumbnailUploadSuccess = false;
+      if (upload.thumbnailDataUrl && upload.thumbnailR2Key) {
+        try {
+          console.log(`📤 Uploading thumbnail to R2: ${upload.thumbnailR2Key}`);
+          
+          // Convert data URL to blob, then to ArrayBuffer for R2 upload
+          const response = await fetch(upload.thumbnailDataUrl);
+          const thumbnailBlob = await response.blob();
+          console.log(`📦 Thumbnail blob size: ${thumbnailBlob.size} bytes`);
+          
+          // Convert Blob to ArrayBuffer (required by r2Client.uploadFile)
+          const thumbnailArrayBuffer = await thumbnailBlob.arrayBuffer();
+          console.log(`🔄 Converted to ArrayBuffer: ${thumbnailArrayBuffer.byteLength} bytes`);
+          
+          const thumbnailResult = await r2Client.uploadFile(
+            upload.thumbnailR2Key,
+            thumbnailArrayBuffer,
+            {
+              contentType: 'image/jpeg',
+              metadata: {
+                originalVideoFilename: upload.file.name,
+                generatedAt: new Date().toISOString(),
+                thumbnailWidth: '150'
+              }
+            }
+          );
+
+          if (thumbnailResult.success) {
+            console.log(`✅ Thumbnail uploaded successfully to R2: ${upload.thumbnailR2Key}`);
+            thumbnailUploadSuccess = true;
+          } else {
+            console.error(`❌ Thumbnail upload failed:`, thumbnailResult.error);
+          }
+        } catch (thumbnailError) {
+          console.error(`❌ Thumbnail upload error:`, thumbnailError);
+        }
+      } else {
+        console.warn(`⚠️ No thumbnail to upload for ${upload.file.name}`, {
+          hasThumbnailDataUrl: !!upload.thumbnailDataUrl,
+          hasThumbnailR2Key: !!upload.thumbnailR2Key
+        });
+      }
+
+      // Update progress to 100%
+      setUploads(prev => prev.map(u => 
+        u.id === upload.id ? { ...u, progress: 100 } : u
+      ));
+
+      console.log(`🎬 Creating video record after both uploads completed`);
+      
+      // Create video record in the service AFTER both video and thumbnail uploads
+      await createVideoFromUpload({
+        id: upload.id,
+        file: upload.file,
+        r2Key,
+        thumbnailR2Key: thumbnailUploadSuccess ? upload.thumbnailR2Key : undefined
+      });
+
+      setUploads(prev => prev.map(u => 
+        u.id === upload.id 
+          ? { ...u, status: 'completed', progress: 100 }
+          : u
+      ));
     } catch (error) {
       setUploads(prev => prev.map(u => 
         u.id === upload.id 
@@ -203,6 +331,7 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
   const getStatusIcon = (status: UploadFile['status']) => {
     switch (status) {
       case 'pending': return <File className="upload-status-icon pending" size={16} />;
+      case 'generating-thumbnail': return <Loader className="upload-status-icon generating" size={16} />;
       case 'uploading': return <Loader className="upload-status-icon uploading" size={16} />;
       case 'completed': return <CheckCircle className="upload-status-icon completed" size={16} />;
       case 'error': return <AlertCircle className="upload-status-icon error" size={16} />;
@@ -279,11 +408,18 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
               {uploads.map(upload => (
                 <div key={upload.id} className={`upload-item ${upload.status}`}>
                   <div className="upload-item-info">
-                    {getStatusIcon(upload.status)}
+                    {upload.thumbnailDataUrl ? (
+                      <div className="upload-thumbnail">
+                        <img src={upload.thumbnailDataUrl} alt="Thumbnail" />
+                      </div>
+                    ) : (
+                      getStatusIcon(upload.status)
+                    )}
                     <div className="upload-item-details">
                       <div className="upload-item-name">{upload.file.name}</div>
                       <div className="upload-item-meta">
                         {formatFileSize(upload.file.size)}
+                        {upload.status === 'generating-thumbnail' && ' • Generating thumbnail...'}
                         {upload.status === 'uploading' && ` • ${upload.progress}%`}
                         {upload.error && ` • ${upload.error}`}
                       </div>

@@ -3,14 +3,16 @@ import { r2Client } from './r2Client';
 import type { Video, Playlist, R2StorageInfo } from '../types';
 
 const STORAGE_KEYS = {
-  PLAYLISTS: 'dbtv-playlists'
-  // Removed VIDEOS - now fetched directly from R2
+  PLAYLISTS: 'dbtv-playlists',
+  VIDEO_METADATA: 'dbtv-video-metadata'
+  // R2 videos are fetched directly, but we store metadata overrides
 };
 
 export class VideoService {
-  private videos: Video[] = [];
   private playlists: Playlist[] = [];
+  private videoMetadataOverrides: Record<string, Partial<Video>> = {};
   private listeners: Array<() => void> = [];
+  private isRefreshing = false;
 
   constructor() {
     this.loadFromStorage();
@@ -30,12 +32,15 @@ export class VideoService {
 
   private saveToStorage() {
     try {
-      // Only save playlists to localStorage - videos are fetched from R2
+      // Save playlists to localStorage
       localStorage.setItem(STORAGE_KEYS.PLAYLISTS, JSON.stringify(this.playlists.map(playlist => ({
         ...playlist,
         dateCreated: playlist.dateCreated.toISOString(),
         lastModified: playlist.lastModified.toISOString()
       }))));
+      
+      // Save video metadata overrides
+      localStorage.setItem(STORAGE_KEYS.VIDEO_METADATA, JSON.stringify(this.videoMetadataOverrides));
     } catch (error) {
       console.error('Failed to save data to localStorage:', error);
     }
@@ -43,7 +48,7 @@ export class VideoService {
 
   private loadFromStorage() {
     try {
-      // Only load playlists from localStorage - videos are fetched from R2
+      // Load playlists from localStorage
       const playlistsData = localStorage.getItem(STORAGE_KEYS.PLAYLISTS);
       if (playlistsData) {
         const parsedPlaylists = JSON.parse(playlistsData);
@@ -53,6 +58,13 @@ export class VideoService {
           lastModified: new Date(playlist.lastModified)
         }));
       }
+      
+      // Load video metadata overrides
+      const metadataData = localStorage.getItem(STORAGE_KEYS.VIDEO_METADATA);
+      if (metadataData) {
+        this.videoMetadataOverrides = JSON.parse(metadataData);
+        console.log('Loaded video metadata overrides for', Object.keys(this.videoMetadataOverrides).length, 'videos');
+      }
     } catch (error) {
       console.error('Failed to load data from localStorage:', error);
     }
@@ -61,11 +73,21 @@ export class VideoService {
   // Video management - now fetches directly from R2
   async getVideos(): Promise<Video[]> {
     if (!r2Client.isConfigured()) {
-      // Return empty array if R2 not configured
+      console.log('R2 client not configured, waiting for initialization...');
       return [];
     }
 
+    // Prevent multiple simultaneous refreshes
+    if (this.isRefreshing) {
+      console.log('Already refreshing videos, skipping duplicate request');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return this.getVideos();
+    }
+
+    this.isRefreshing = true;
+
     try {
+      console.log('Fetching videos from R2...');
       // Always fetch current state from R2 bucket
       const result = await r2Client.listObjects('videos/');
       
@@ -79,14 +101,14 @@ export class VideoService {
       // Filter out any failed conversions
       const validVideos = r2Videos.filter(video => video !== null) as Video[];
       
-      // Update local cache for performance
-      this.videos = validVideos;
-      
-      return [...validVideos];
+      console.log(`Successfully fetched ${validVideos.length} videos from R2`);
+      return validVideos;
     } catch (error) {
       console.error('Failed to fetch videos from R2:', error);
-      // Fallback to cached videos if R2 fetch fails
-      return [...this.videos];
+      // Re-throw error so components can handle appropriately
+      throw error;
+    } finally {
+      this.isRefreshing = false;
     }
   }
 
@@ -96,7 +118,7 @@ export class VideoService {
   }
 
   // This method is now mainly used for creating video records during upload
-  // The actual source of truth is R2, so we just notify listeners to refresh
+  // The actual source of truth is R2, so we notify listeners to refresh
   async addVideo(videoData: {
     title: string;
     filename: string;
@@ -115,31 +137,53 @@ export class VideoService {
       r2Storage: videoData.r2Storage
     };
 
-    // Don't persist to localStorage - R2 is source of truth
-    // Just notify listeners to refresh from R2
-    this.notify();
+    console.log('🎬 Adding new video to service:', {
+      title: newVideo.title,
+      r2Key: newVideo.r2Storage?.key,
+      thumbnailKey: newVideo.r2Storage?.thumbnailKey,
+      thumbnailUrl: newVideo.r2Storage?.thumbnailUrl
+    });
+
+    // Wait for R2 to be consistent (shorter delay since thumbnail should be uploaded already)
+    setTimeout(() => {
+      console.log('📺 Notifying listeners of new video upload after delay');
+      this.notify();
+    }, 1000);
     
     return newVideo;
   }
 
   async updateVideo(id: string, updates: Partial<Video>): Promise<Video | null> {
-    const index = this.videos.findIndex(v => v.id === id);
-    if (index === -1) return null;
+    // Get current video to ensure it exists
+    const videos = await this.getVideos();
+    const video = videos.find(v => v.id === id);
+    if (!video) return null;
 
-    this.videos[index] = {
-      ...this.videos[index],
+    // Create the updated video
+    const updatedVideo = {
+      ...video,
       ...updates,
       lastModified: new Date()
     };
 
+    // Save the metadata override to localStorage
+    this.videoMetadataOverrides[id] = {
+      ...(this.videoMetadataOverrides[id] || {}),
+      ...updates,
+      lastModified: new Date()
+    };
+
+    console.log('Saving video metadata override for:', updatedVideo.title);
     this.saveToStorage();
     this.notify();
     
-    return this.videos[index];
+    return updatedVideo;
   }
 
   async deleteVideo(id: string, forceDelete = false): Promise<{ success: boolean; localDeleted: boolean; r2Deleted: boolean; error?: string }> {
-    const video = this.videos.find(v => v.id === id);
+    // Fetch videos from R2 to find the video to delete
+    const videos = await this.getVideos();
+    const video = videos.find(v => v.id === id);
     if (!video) {
       return { success: false, localDeleted: false, r2Deleted: false, error: 'Video not found' };
     }
@@ -172,16 +216,21 @@ export class VideoService {
     }
 
     // Remove from all playlists first
-    this.playlists = this.playlists.map(playlist => ({
+    const playlistUpdates = this.playlists.map(async playlist => ({
       ...playlist,
       videoIds: playlist.videoIds.filter(vid => vid !== id),
       videoOrder: playlist.videoOrder.filter(vid => vid !== id),
       lastModified: new Date(),
-      metadata: this.calculatePlaylistMetadata(playlist.videoIds.filter(vid => vid !== id))
+      metadata: await this.calculatePlaylistMetadata(playlist.videoIds.filter(vid => vid !== id))
     }));
+    
+    this.playlists = await Promise.all(playlistUpdates);
 
-    // Remove video
-    this.videos = this.videos.filter(v => v.id !== id);
+    // Remove any metadata override for this video
+    if (this.videoMetadataOverrides[id]) {
+      delete this.videoMetadataOverrides[id];
+      console.log('Removed metadata override for deleted video:', id);
+    }
     
     this.saveToStorage();
     this.notify();
@@ -227,18 +276,30 @@ export class VideoService {
     return newPlaylist;
   }
 
-  addVideoToPlaylist(playlistId: string, videoId: string): boolean {
+  async addVideoToPlaylist(playlistId: string, videoId: string): Promise<boolean> {
     const playlist = this.playlists.find(p => p.id === playlistId);
-    const video = this.videos.find(v => v.id === videoId);
     
-    if (!playlist || !video || playlist.videoIds.includes(videoId)) {
+    if (!playlist || playlist.videoIds.includes(videoId)) {
+      return false;
+    }
+
+    // Verify video exists in R2 before adding to playlist
+    try {
+      const videos = await this.getVideos();
+      const video = videos.find(v => v.id === videoId);
+      if (!video) {
+        console.warn(`Video ${videoId} not found in R2, cannot add to playlist`);
+        return false;
+      }
+    } catch (error) {
+      console.error('Failed to verify video exists in R2:', error);
       return false;
     }
 
     playlist.videoIds.push(videoId);
     playlist.videoOrder.push(videoId);
     playlist.lastModified = new Date();
-    playlist.metadata = this.calculatePlaylistMetadata(playlist.videoIds);
+    playlist.metadata = await this.calculatePlaylistMetadata(playlist.videoIds);
 
     this.saveToStorage();
     this.notify();
@@ -246,7 +307,7 @@ export class VideoService {
     return true;
   }
 
-  removeVideoFromPlaylist(playlistId: string, videoId: string): boolean {
+  async removeVideoFromPlaylist(playlistId: string, videoId: string): Promise<boolean> {
     const playlist = this.playlists.find(p => p.id === playlistId);
     if (!playlist || !playlist.videoIds.includes(videoId)) {
       return false;
@@ -255,7 +316,7 @@ export class VideoService {
     playlist.videoIds = playlist.videoIds.filter(id => id !== videoId);
     playlist.videoOrder = playlist.videoOrder.filter(id => id !== videoId);
     playlist.lastModified = new Date();
-    playlist.metadata = this.calculatePlaylistMetadata(playlist.videoIds);
+    playlist.metadata = await this.calculatePlaylistMetadata(playlist.videoIds);
 
     this.saveToStorage();
     this.notify();
@@ -263,19 +324,31 @@ export class VideoService {
     return true;
   }
 
-  moveVideoToPlaylist(sourcePlaylistId: string | null, targetPlaylistId: string, videoId: string): boolean {
+  async moveVideoToPlaylist(sourcePlaylistId: string | null, targetPlaylistId: string, videoId: string): Promise<boolean> {
     const targetPlaylist = this.playlists.find(p => p.id === targetPlaylistId);
-    const video = this.videos.find(v => v.id === videoId);
     
-    if (!targetPlaylist || !video) return false;
+    if (!targetPlaylist) return false;
+
+    // Verify video exists in R2
+    try {
+      const videos = await this.getVideos();
+      const video = videos.find(v => v.id === videoId);
+      if (!video) {
+        console.warn(`Video ${videoId} not found in R2, cannot move to playlist`);
+        return false;
+      }
+    } catch (error) {
+      console.error('Failed to verify video exists in R2:', error);
+      return false;
+    }
 
     // Remove from source playlist if specified
     if (sourcePlaylistId) {
-      this.removeVideoFromPlaylist(sourcePlaylistId, videoId);
+      await this.removeVideoFromPlaylist(sourcePlaylistId, videoId);
     }
 
     // Add to target playlist
-    return this.addVideoToPlaylist(targetPlaylistId, videoId);
+    return await this.addVideoToPlaylist(targetPlaylistId, videoId);
   }
 
   reorderVideosInPlaylist(playlistId: string, activeId: string, overId: string): boolean {
@@ -300,14 +373,24 @@ export class VideoService {
     return true;
   }
 
-  private calculatePlaylistMetadata(videoIds: string[]) {
-    const videos = videoIds.map(id => this.videos.find(v => v.id === id)).filter(Boolean) as Video[];
-    
-    return {
-      totalDuration: videos.reduce((sum, video) => sum + video.duration, 0),
-      videoCount: videos.length,
-      totalSize: videos.reduce((sum, video) => sum + video.fileSize, 0)
-    };
+  private async calculatePlaylistMetadata(videoIds: string[]) {
+    try {
+      const allVideos = await this.getVideos();
+      const videos = videoIds.map(id => allVideos.find(v => v.id === id)).filter(Boolean) as Video[];
+      
+      return {
+        totalDuration: videos.reduce((sum, video) => sum + video.duration, 0),
+        videoCount: videos.length,
+        totalSize: videos.reduce((sum, video) => sum + video.fileSize, 0)
+      };
+    } catch (error) {
+      console.error('Failed to calculate playlist metadata:', error);
+      return {
+        totalDuration: 0,
+        videoCount: videoIds.length,
+        totalSize: 0
+      };
+    }
   }
 
   // R2 Integration methods
@@ -335,21 +418,41 @@ export class VideoService {
       // Generate consistent ID from R2 key (hash it for uniqueness)
       const videoId = this.generateVideoIdFromR2Key(r2Object.key);
       
+      // Check if thumbnail actually exists for this video and generate fresh URL
+      const thumbnailKey = r2Object.key.replace('videos/', 'thumbnails/').replace(/\.[^/.]+$/, '_thumb.jpg');
+      let thumbnailUrl: string | undefined = undefined;
+      
+      // Only set thumbnail URL if thumbnail actually exists in R2
+      // IMPORTANT: Always regenerate URL using current getPublicUrl() to fix cached URL issues
+      try {
+        const thumbnailExists = await r2Client.objectExists(thumbnailKey);
+        if (thumbnailExists) {
+          thumbnailUrl = r2Client.getPublicUrl(thumbnailKey) || undefined;
+          console.log(`✅ Thumbnail found for ${filename}: ${thumbnailKey} -> ${thumbnailUrl}`);
+        } else {
+          console.log(`⚠️ No thumbnail found for ${filename}: ${thumbnailKey}`);
+        }
+      } catch (error) {
+        console.warn(`Could not check thumbnail existence for ${filename}:`, error);
+      }
+
       const r2Storage: R2StorageInfo = {
         key: r2Object.key,
         bucket: r2Client.getConfig()?.bucketName || 'unknown',
         etag: r2Object.etag,
-        uploadDate: r2Object.lastModified
+        uploadDate: r2Object.lastModified,
+        thumbnailKey,
+        thumbnailUrl // Always use freshly generated URL to fix cached URL issues
       };
 
       // Create video object directly (don't persist to localStorage)
-      const video: Video = {
+      const baseVideo: Video = {
         id: videoId,
         title,
         filename,
         duration: 0, // TODO: Extract from video metadata
         fileSize: r2Object.size,
-        thumbnailUrl: '',
+        thumbnailUrl: thumbnailUrl || '',
         tags: [],
         dateAdded: r2Object.lastModified,
         lastModified: r2Object.lastModified,
@@ -361,7 +464,23 @@ export class VideoService {
         }
       };
 
-      return video;
+      // Apply any metadata overrides from localStorage
+      const override = this.videoMetadataOverrides[videoId];
+      if (override) {
+        console.log('Applying metadata override for video:', title);
+        return {
+          ...baseVideo,
+          ...override,
+          // Always preserve core R2 data
+          id: videoId,
+          filename,
+          fileSize: r2Object.size,
+          r2Storage,
+          dateAdded: r2Object.lastModified
+        };
+      }
+
+      return baseVideo;
     } catch (error) {
       console.error('Failed to create video from R2 object:', error);
       return null;
@@ -373,13 +492,16 @@ export class VideoService {
     id: string;
     file: File;
     r2Key?: string;
+    thumbnailR2Key?: string;
   }): Promise<Video | null> {
     if (!uploadResult.r2Key) return null;
 
     const r2Storage: R2StorageInfo = {
       key: uploadResult.r2Key,
       bucket: r2Client.getConfig()?.bucketName || 'unknown',
-      uploadDate: new Date()
+      uploadDate: new Date(),
+      thumbnailKey: uploadResult.thumbnailR2Key,
+      thumbnailUrl: uploadResult.thumbnailR2Key ? (r2Client.getPublicUrl(uploadResult.thumbnailR2Key) || undefined) : undefined
     };
 
     // Extract basic video metadata
@@ -402,7 +524,8 @@ export class VideoService {
 
   // Retry R2 deletion for a specific video
   async retryR2Deletion(videoId: string, maxRetries = 3): Promise<{ success: boolean; error?: string }> {
-    const video = this.videos.find(v => v.id === videoId);
+    const videos = await this.getVideos();
+    const video = videos.find((v: Video) => v.id === videoId);
     if (!video || !video.r2Storage) {
       return { success: false, error: 'Video not found or has no R2 storage' };
     }
@@ -436,25 +559,36 @@ export class VideoService {
   }
 
   // Get videos that have R2 storage but failed deletion (orphaned)
-  getOrphanedR2Videos(): Video[] {
-    return this.videos.filter(video => 
-      video.r2Storage && 
-      !video.r2Storage.key.startsWith('orphaned_')
-    );
+  async getOrphanedR2Videos(): Promise<Video[]> {
+    try {
+      const videos = await this.getVideos();
+      return videos.filter(video => 
+        video.r2Storage && 
+        !video.r2Storage.key.startsWith('orphaned_')
+      );
+    } catch (error) {
+      console.error('Failed to get orphaned R2 videos:', error);
+      return [];
+    }
   }
 
   // Mark video as having orphaned R2 storage
-  markVideoAsOrphaned(videoId: string): boolean {
-    const video = this.videos.find(v => v.id === videoId);
-    if (!video || !video.r2Storage) return false;
+  async markVideoAsOrphaned(videoId: string): Promise<boolean> {
+    try {
+      const videos = await this.getVideos();
+      const video = videos.find(v => v.id === videoId);
+      if (!video || !video.r2Storage) return false;
 
-    video.r2Storage.key = `orphaned_${video.r2Storage.key}`;
-    video.lastModified = new Date();
-    
-    this.saveToStorage();
-    this.notify();
-    
-    return true;
+      // TODO: In a full implementation, this would update metadata in R2
+      // For now, just notify listeners since R2 is source of truth
+      console.warn(`Video ${videoId} marked as orphaned in R2 storage`);
+      this.notify();
+      
+      return true;
+    } catch (error) {
+      console.error('Failed to mark video as orphaned:', error);
+      return false;
+    }
   }
 
   // Generate consistent video ID from R2 key

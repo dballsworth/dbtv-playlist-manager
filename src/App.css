@@ -259,6 +259,17 @@
   color: rgba(255, 255, 255, 0.8);
 }
 
+/* Loading animation for thumbnails */
+.thumbnail-loading {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+}
+
 .repository-thumbnail {
   height: 40px;
   font-size: 16px;

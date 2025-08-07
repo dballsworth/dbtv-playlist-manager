@@ -4,14 +4,22 @@ import { RepositoryColumn } from './RepositoryColumn';
 import { PlaylistColumn } from './PlaylistColumn';
 import { AddPlaylistButton } from './AddPlaylistButton';
 import { VideoCard } from './VideoCard';
-import type { DragItem } from '../../types';
+import { VideoEditModal } from '../VideoEditModal';
+import type { DragItem, Video } from '../../types';
 import { useVideoData } from '../../hooks/useVideoData';
 import { extractVideoId } from '../../utils/dragUtils';
 
 export const KanbanBoard: React.FC = () => {
-  const { videos, playlists, repositoryVideos, createPlaylist, addVideoToPlaylist, reorderVideosInPlaylist, removeVideoFromPlaylist, moveVideoToPlaylist } = useVideoData();
+  const { videos, playlists, repositoryVideos, createPlaylist, addVideoToPlaylist, removeVideoFromPlaylist, moveVideoToPlaylist } = useVideoData();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeDragItem, setActiveDragItem] = useState<DragItem | null>(null);
+  const [editingVideo, setEditingVideo] = useState<Video | null>(null);
+
+  // Shared video editing handler
+  const handleEditVideo = (video: Video) => {
+    console.log('Opening video editor for:', video.title);
+    setEditingVideo(video);
+  };
 
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
@@ -65,27 +73,23 @@ export const KanbanBoard: React.FC = () => {
         // Don't move if dropping on the same playlist
         if (sourcePlaylistId !== targetPlaylistId) {
           console.log('🔄 Moving video between playlists');
-          const result = moveVideoToPlaylist(sourcePlaylistId, targetPlaylistId, videoId);
-          console.log('✅ Move result:', result);
+          moveVideoToPlaylist(sourcePlaylistId, targetPlaylistId, videoId).then(result => {
+            console.log('✅ Move result:', result);
+          });
         } else {
           console.log('⚠️ Skipping: same playlist');
         }
       } else {
         // Copying from repository to playlist - use add function
         console.log('➕ Adding video from repository to playlist');
-        const result = addVideoToPlaylist(targetPlaylistId, videoId);
-        console.log('✅ Add result:', result);
+        addVideoToPlaylist(targetPlaylistId, videoId).then(result => {
+          console.log('✅ Add result:', result);
+        });
       }
     }
 
-    // Handle reordering within playlist
-    if (activeDragItem.type === 'video' && activeDragItem.sourceType === 'playlist') {
-      const playlistId = activeDragItem.sourceId!;
-      const videoId = extractVideoId(activeId);
-      const overVideoId = extractVideoId(overId);
-      // Implement reordering logic
-      reorderVideosInPlaylist(playlistId, videoId, overVideoId);
-    }
+    // Note: Reordering within playlist removed to avoid conflicts with cross-container dragging
+    // Users can drag videos between playlists and from repository to playlists
 
     setActiveId(null);
     setActiveDragItem(null);
@@ -108,7 +112,10 @@ export const KanbanBoard: React.FC = () => {
   return (
     <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="kanban-board">
-        <RepositoryColumn videos={repositoryVideos} />
+        <RepositoryColumn 
+          videos={repositoryVideos} 
+          onEditVideo={handleEditVideo}
+        />
         
         {playlists.map((playlist) => (
           <PlaylistColumn
@@ -116,6 +123,7 @@ export const KanbanBoard: React.FC = () => {
             playlist={playlist}
             videos={videos.filter(v => playlist.videoIds.includes(v.id))}
             onRemoveVideo={removeVideoFromPlaylist}
+            onEditVideo={handleEditVideo}
           />
         ))}
         
@@ -125,6 +133,17 @@ export const KanbanBoard: React.FC = () => {
       <DragOverlay>
         {getDragOverlayContent()}
       </DragOverlay>
+
+      {editingVideo && (
+        <VideoEditModal
+          video={editingVideo}
+          onClose={() => setEditingVideo(null)}
+          onSave={(updatedVideo) => {
+            console.log('Video updated from shared modal:', updatedVideo);
+            setEditingVideo(null);
+          }}
+        />
+      )}
     </DndContext>
   );
 };

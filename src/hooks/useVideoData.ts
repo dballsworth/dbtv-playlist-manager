@@ -7,35 +7,71 @@ export const useVideoData = () => {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
-  // Refresh data from service
-  const refreshData = useCallback(async () => {
+  // Refresh data from service with retry logic
+  const refreshData = useCallback(async (attempt = 1) => {
+    const maxRetries = 3;
+    
     try {
       setIsLoading(true);
+      setError(null);
+      
+      console.log(`Refreshing video data (attempt ${attempt})`);
+      
       const [videosData, playlistsData] = await Promise.all([
         videoService.getVideos(),
         Promise.resolve(videoService.getPlaylists())
       ]);
+      
       setVideos(videosData);
       setPlaylists(playlistsData);
-      setError(null);
+      setRetryCount(0);
+      
+      console.log(`Successfully loaded ${videosData.length} videos and ${playlistsData.length} playlists`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load data';
+      console.error(`Failed to refresh data (attempt ${attempt}):`, errorMessage);
+      
+      if (attempt < maxRetries) {
+        // Exponential backoff retry
+        const delay = Math.pow(2, attempt) * 1000;
+        console.log(`Retrying in ${delay}ms...`);
+        
+        setTimeout(() => {
+          setRetryCount(attempt);
+          refreshData(attempt + 1);
+        }, delay);
+      } else {
+        setError(errorMessage);
+        setRetryCount(maxRetries);
+      }
     } finally {
-      setIsLoading(false);
+      if (attempt === 1 || attempt >= maxRetries) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   // Subscribe to service updates
   useEffect(() => {
     const unsubscribe = videoService.subscribe(() => {
+      console.log('VideoService notified of changes, refreshing data...');
       refreshData();
     });
 
     // Initial data load
+    console.log('useVideoData initializing...');
     refreshData();
 
     return unsubscribe;
+  }, [refreshData]);
+
+  // Force refresh function that clears errors and retries
+  const forceRefresh = useCallback(async () => {
+    setError(null);
+    setRetryCount(0);
+    await refreshData();
   }, [refreshData]);
 
   // Video operations
@@ -87,9 +123,9 @@ export const useVideoData = () => {
     }
   }, []);
 
-  const addVideoToPlaylist = useCallback((playlistId: string, videoId: string) => {
+  const addVideoToPlaylist = useCallback(async (playlistId: string, videoId: string) => {
     try {
-      const success = videoService.addVideoToPlaylist(playlistId, videoId);
+      const success = await videoService.addVideoToPlaylist(playlistId, videoId);
       if (!success) {
         setError('Failed to add video to playlist');
       }
@@ -100,9 +136,9 @@ export const useVideoData = () => {
     }
   }, []);
 
-  const removeVideoFromPlaylist = useCallback((playlistId: string, videoId: string) => {
+  const removeVideoFromPlaylist = useCallback(async (playlistId: string, videoId: string) => {
     try {
-      const success = videoService.removeVideoFromPlaylist(playlistId, videoId);
+      const success = await videoService.removeVideoFromPlaylist(playlistId, videoId);
       if (!success) {
         setError('Failed to remove video from playlist');
       }
@@ -113,9 +149,9 @@ export const useVideoData = () => {
     }
   }, []);
 
-  const moveVideoToPlaylist = useCallback((sourcePlaylistId: string | null, targetPlaylistId: string, videoId: string) => {
+  const moveVideoToPlaylist = useCallback(async (sourcePlaylistId: string | null, targetPlaylistId: string, videoId: string) => {
     try {
-      const success = videoService.moveVideoToPlaylist(sourcePlaylistId, targetPlaylistId, videoId);
+      const success = await videoService.moveVideoToPlaylist(sourcePlaylistId, targetPlaylistId, videoId);
       if (!success) {
         setError('Failed to move video between playlists');
       }
@@ -182,8 +218,8 @@ export const useVideoData = () => {
   }, []);
 
   // Get orphaned R2 videos
-  const getOrphanedR2Videos = useCallback(() => {
-    return videoService.getOrphanedR2Videos();
+  const getOrphanedR2Videos = useCallback(async () => {
+    return await videoService.getOrphanedR2Videos();
   }, []);
 
   // Get video URL
@@ -196,10 +232,8 @@ export const useVideoData = () => {
     setError(null);
   }, []);
 
-  // Computed values
-  const repositoryVideos = videos.filter(video => 
-    !playlists.some(playlist => playlist.videoIds.includes(video.id))
-  );
+  // Computed values - Repository shows ALL videos to allow multiple playlist usage
+  const repositoryVideos = videos;
 
   return {
     // Data
@@ -210,6 +244,7 @@ export const useVideoData = () => {
     // State
     isLoading,
     error,
+    retryCount,
     
     // Video operations
     addVideo,
@@ -232,6 +267,7 @@ export const useVideoData = () => {
     
     // Utility
     clearError,
-    refreshData
+    refreshData,
+    forceRefresh
   };
 };

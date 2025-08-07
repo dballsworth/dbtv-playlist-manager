@@ -1,4 +1,4 @@
-import { S3Client, ListObjectsV2Command, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, ListObjectsV2Command, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { R2Config } from '../types';
 
@@ -261,6 +261,28 @@ export class R2Client {
   }
 
   /**
+   * Check if an object exists in R2 storage
+   */
+  async objectExists(key: string): Promise<boolean> {
+    if (!this.s3Client || !this.config) {
+      return false;
+    }
+
+    try {
+      const command = new HeadObjectCommand({
+        Bucket: this.config.bucketName,
+        Key: key,
+      });
+
+      await this.s3Client.send(command);
+      return true;
+    } catch (error) {
+      // HeadObject throws an error if object doesn't exist
+      return false;
+    }
+  }
+
+  /**
    * Get the public URL for an object (if bucket allows public access)
    */
   getPublicUrl(key: string): string | null {
@@ -268,13 +290,36 @@ export class R2Client {
       return null;
     }
 
+    // PRIORITY 1: Use customDomain if configured (this is the correct approach)
     if (this.config.customDomain) {
-      return `${this.config.customDomain}/${key}`;
+      // Custom domain should not include protocol, so add https://
+      const domain = this.config.customDomain.replace(/^https?:\/\//, '');
+      const publicUrl = `https://${domain}/${key}`;
+      console.log(`🔗 Using custom domain for public URL: ${publicUrl}`);
+      return publicUrl;
     }
 
-    // Construct public R2 URL (if public access is enabled)
-    const baseUrl = this.config.endpoint.replace('.r2.cloudflarestorage.com', '.r2.dev');
-    return `${baseUrl}/${key}`;
+    // FALLBACK: Only extract from endpoint if no customDomain is set
+    // WARNING: The R2 endpoint account ID may differ from the public URL account ID
+    console.warn(`⚠️ No customDomain configured, attempting to extract from endpoint. This may produce incorrect URLs.`);
+    
+    let publicUrl: string;
+    
+    if (this.config.endpoint.includes('.r2.cloudflarestorage.com')) {
+      // Extract account ID from endpoint, but this may not match the public URL account ID
+      const accountId = this.config.endpoint.split('://')[1].split('.')[0];
+      publicUrl = `https://pub-${accountId}.r2.dev`;
+      console.warn(`⚠️ Using endpoint account ID for public URL: ${publicUrl}. If thumbnails don't load, set customDomain to the correct public domain.`);
+    } else if (this.config.endpoint.includes('.r2.dev')) {
+      // If endpoint is already r2.dev format, use it directly
+      publicUrl = this.config.endpoint.replace('http://', 'https://');
+    } else {
+      // Fallback to old logic for other formats
+      publicUrl = this.config.endpoint.replace('.r2.cloudflarestorage.com', '.r2.dev');
+    }
+    
+    console.log(`🔗 Generated fallback public URL: ${publicUrl}/${key}`);
+    return `${publicUrl}/${key}`;
   }
 
   /**

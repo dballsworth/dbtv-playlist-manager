@@ -11,7 +11,7 @@ interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation();
-  const { isR2Configured } = useSettings();
+  const { isR2Configured, isInitializing } = useSettings();
   const [showUploadModal, setShowUploadModal] = useState(false);
   
   const getActiveTab = (): ViewMode => {
@@ -23,6 +23,10 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const activeTab = getActiveTab();
 
   const handleUploadClick = () => {
+    if (isInitializing) {
+      alert('Please wait for R2 connection to initialize...');
+      return;
+    }
     if (!isR2Configured) {
       alert('Please configure R2 storage in Settings first');
       return;
@@ -62,9 +66,12 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="header-actions">
           <button 
             onClick={handleUploadClick}
-            className={`upload-btn ${!isR2Configured ? 'disabled' : ''}`}
-            disabled={!isR2Configured}
-            title={isR2Configured ? 'Upload videos to R2' : 'Configure R2 in Settings first'}
+            className={`upload-btn ${!isR2Configured || isInitializing ? 'disabled' : ''}`}
+            disabled={!isR2Configured || isInitializing}
+            title={
+              isInitializing ? 'R2 connection initializing...' :
+              isR2Configured ? 'Upload videos to R2' : 'Configure R2 in Settings first'
+            }
           >
             <Upload size={16} />
             Upload Videos

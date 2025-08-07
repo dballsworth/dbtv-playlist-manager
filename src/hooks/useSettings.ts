@@ -13,7 +13,7 @@ const defaultSettings: AppSettings = {
       secretAccessKey: '',
       bucketName: '',
       region: 'auto',
-      customDomain: ''
+      customDomain: 'pub-e191fb2d6e0a4cb691e3258b5d4e85fe.r2.dev'
     },
     enabled: false
   },
@@ -62,22 +62,108 @@ export const useSettings = () => {
     status: 'disconnected'
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(false);
+
+  // Auto-configure R2 client with stored settings
+  const autoConfigureR2Client = useCallback(async (settingsToUse: AppSettings) => {
+    const r2Config = settingsToUse.cloudStorage.r2;
+    
+    // Only auto-configure if we have complete R2 settings
+    if (!r2Config.endpoint || !r2Config.accessKeyId || !r2Config.secretAccessKey || !r2Config.bucketName) {
+      console.log('Incomplete R2 settings, skipping auto-configuration');
+      setCloudStatus({ status: 'disconnected' });
+      return;
+    }
+    
+    // Validate settings before attempting to configure
+    const validationErrors = validateR2Config(r2Config);
+    if (validationErrors.length > 0) {
+      console.warn('Invalid R2 settings found, skipping auto-configuration:', validationErrors);
+      setCloudStatus({ 
+        status: 'error', 
+        error: `Invalid settings: ${validationErrors[0]}` 
+      });
+      return;
+    }
+    
+    console.log('Auto-configuring R2 client with stored settings...');
+    setIsInitializing(true);
+    setCloudStatus({ status: 'connecting' });
+    
+    try {
+      // Configure the R2 client
+      r2Client.configure(r2Config);
+      
+      // Test connection to ensure it works
+      const result = await r2Client.testConnection();
+      
+      if (result.success) {
+        console.log('✅ R2 client auto-configured successfully');
+        setCloudStatus({
+          status: 'connected',
+          lastTested: new Date()
+        });
+      } else {
+        console.warn('❌ R2 auto-configuration failed:', result.error);
+        setCloudStatus({
+          status: 'error',
+          error: result.error || 'Auto-configuration failed',
+          lastTested: new Date()
+        });
+      }
+    } catch (error) {
+      console.error('R2 auto-configuration error:', error);
+      setCloudStatus({
+        status: 'error',
+        error: 'Auto-configuration failed: ' + (error instanceof Error ? error.message : 'Unknown error'),
+        lastTested: new Date()
+      });
+    } finally {
+      setIsInitializing(false);
+    }
+  }, []);
 
   // Load settings from localStorage on mount
   useEffect(() => {
-    try {
-      const storedSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
-      if (storedSettings) {
-        const parsed = JSON.parse(storedSettings);
-        // Merge with defaults to handle new settings fields
-        setSettings({ ...defaultSettings, ...parsed });
+    const loadSettings = async () => {
+      try {
+        const storedSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
+        if (storedSettings) {
+          const parsed = JSON.parse(storedSettings);
+          // Deep merge with defaults to handle new settings fields and preserve defaults for empty fields
+          const loadedSettings = {
+            ...defaultSettings,
+            ...parsed,
+            cloudStorage: {
+              ...defaultSettings.cloudStorage,
+              ...parsed.cloudStorage,
+              r2: {
+                ...defaultSettings.cloudStorage.r2,
+                ...parsed.cloudStorage?.r2,
+                // Ensure customDomain uses default if stored value is empty
+                customDomain: parsed.cloudStorage?.r2?.customDomain || defaultSettings.cloudStorage.r2.customDomain
+              }
+            }
+          };
+          setSettings(loadedSettings);
+          
+          // Auto-configure R2 client if we have valid stored settings
+          if (loadedSettings.cloudStorage.enabled) {
+            await autoConfigureR2Client(loadedSettings);
+          } else {
+            console.log('Cloud storage disabled, skipping R2 auto-configuration');
+            setCloudStatus({ status: 'disconnected' });
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load settings from localStorage:', error);
+      } finally {
+        setIsLoading(false);
       }
-    } catch (error) {
-      console.error('Failed to load settings from localStorage:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    };
+    
+    loadSettings();
+  }, [autoConfigureR2Client]);
 
   // Save settings to localStorage whenever they change
   const saveSettings = useCallback((newSettings: AppSettings) => {
@@ -191,6 +277,7 @@ export const useSettings = () => {
     settings,
     cloudStatus,
     isLoading,
+    isInitializing,
     
     // R2 specific functions
     updateR2Config,

@@ -25,6 +25,8 @@ export interface R2StorageInfo {
   etag?: string; // R2 ETag for version tracking
   publicUrl?: string; // Public URL if available
   uploadDate: Date; // When uploaded to R2
+  thumbnailKey?: string; // R2 key for thumbnail image
+  thumbnailUrl?: string; // Public URL for thumbnail
 }
 
 export interface PlaylistMetadata {

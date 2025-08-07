@@ -1,11 +1,10 @@
 import React from 'react';
 import { useDraggable } from '@dnd-kit/core';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import type { Video } from '../../types';
 import { createDragId } from '../../utils/dragUtils';
+import { useThumbnail } from '../../hooks/useThumbnail';
 // import { useVideoData } from '../../hooks/useVideoData';  // For future video URL usage
-import { X, Edit } from 'lucide-react';
+import { X, Edit, Loader } from 'lucide-react';
 
 interface VideoCardProps {
   video: Video;
@@ -33,43 +32,28 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   onToggleSelection
 }) => {
   // const { getVideoUrl } = useVideoData(); // For future video URL usage
+  const { dataUrl: thumbnailDataUrl, isLoading: thumbnailLoading, error: thumbnailError } = useThumbnail(video);
   const dragId = createDragId(video.id, sourceType, sourceId);
   
-  // Use sortable for playlist videos, draggable for repository videos
-  const useSortableHook = sourceType === 'playlist';
-  
-  const sortableProps = useSortable({
-    id: dragId,
-    data: {
-      id: video.id,
-      type: 'video' as const,
-      sourceType,
-      sourceId,
-    } as const,
-    disabled: !useSortableHook,
-  });
-  
-  const draggableProps = useDraggable({
-    id: dragId,
-    data: {
-      id: video.id,
-      type: 'video' as const,
-      sourceType,
-      sourceId,
-    } as const,
-    disabled: useSortableHook,
-  });
-
+  // Use draggable for all videos to enable cross-container dragging
   const {
     attributes,
     listeners,
     setNodeRef,
     transform,
     isDragging: isCurrentlyDragging,
-  } = useSortableHook ? sortableProps : draggableProps;
+  } = useDraggable({
+    id: dragId,
+    data: {
+      id: video.id,
+      type: 'video' as const,
+      sourceType,
+      sourceId,
+    } as const,
+  });
 
   const style = transform ? {
-    transform: useSortableHook ? CSS.Transform.toString(transform) : `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+    transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
   } : undefined;
 
   const handleRemove = (e: React.MouseEvent) => {
@@ -154,8 +138,18 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         {...attributes}
       >
         <div className={`card-thumbnail ${isCompact ? 'repository-thumbnail' : ''}`}>
-          {video.thumbnailUrl ? (
-            <img src={video.thumbnailUrl} alt={video.title} />
+          {thumbnailDataUrl ? (
+            <img src={thumbnailDataUrl} alt={video.title} />
+          ) : thumbnailLoading ? (
+            <div className="thumbnail-placeholder">
+              <Loader size={16} className="thumbnail-loading" />
+              <small>Loading...</small>
+            </div>
+          ) : thumbnailError ? (
+            <div className="thumbnail-placeholder">
+              <div>⚠️</div>
+              <small>Failed</small>
+            </div>
           ) : video.r2Storage ? (
             <div className="thumbnail-placeholder">
               <div>☁️</div>

@@ -2,18 +2,20 @@ import React, { useState } from 'react';
 import { VideoCard } from './VideoCard';
 import { SearchPanel } from './SearchPanel';
 import { BulkActionsToolbar } from '../BulkActionsToolbar';
-import { VideoEditModal } from '../VideoEditModal';
 import { useVideoSelection } from '../../hooks/useVideoSelection';
 import { useVideoData } from '../../hooks/useVideoData';
+import { useSettings } from '../../hooks/useSettings';
 import type { Video, FilterCriteria, SortCriteria } from '../../types';
 import { Folder } from 'lucide-react';
 
 interface RepositoryColumnProps {
   videos: Video[];
+  onEditVideo?: (video: Video) => void;
 }
 
-export const RepositoryColumn: React.FC<RepositoryColumnProps> = ({ videos }) => {
-  const { playlists, deleteVideo, addVideoToPlaylist, createPlaylist, retryR2Deletion, isLoading, error } = useVideoData();
+export const RepositoryColumn: React.FC<RepositoryColumnProps> = ({ videos, onEditVideo }) => {
+  const { playlists, deleteVideo, addVideoToPlaylist, createPlaylist, retryR2Deletion, isLoading, error, retryCount, forceRefresh } = useVideoData();
+  const { isInitializing, cloudStatus } = useSettings();
   const {
     isSelected,
     toggleVideoSelection,
@@ -30,7 +32,6 @@ export const RepositoryColumn: React.FC<RepositoryColumnProps> = ({ videos }) =>
     usageStatus: 'all'
   });
   const [sortBy, setSortBy] = useState<SortCriteria>('date-desc');
-  const [editingVideo, setEditingVideo] = useState<Video | null>(null);
 
   const filteredVideos = videos.filter(video => {
     // Search term filter
@@ -199,6 +200,14 @@ export const RepositoryColumn: React.FC<RepositoryColumnProps> = ({ videos }) =>
           <Folder size={16} className="inline mr-2" />
           Repository ({sortedVideos.length})
         </span>
+        <button 
+          onClick={forceRefresh} 
+          className="btn btn-icon" 
+          title="Refresh from R2 storage"
+          disabled={isLoading}
+        >
+          🔄
+        </button>
       </div>
       <div className="column-content">
         <SearchPanel 
@@ -218,22 +227,58 @@ export const RepositoryColumn: React.FC<RepositoryColumnProps> = ({ videos }) =>
         />
         
         <div className="video-list">
-          {isLoading ? (
+          {isInitializing ? (
             <div className="loading-state">
               <div className="loading-spinner"></div>
-              <p>Loading videos from R2 storage...</p>
+              <p>🔧 Initializing R2 connection...</p>
+              <small>Setting up cloud storage access</small>
+            </div>
+          ) : isLoading ? (
+            <div className="loading-state">
+              <div className="loading-spinner"></div>
+              <p>Loading videos from R2 storage...{retryCount > 0 ? ` (Retry ${retryCount}/3)` : ''}</p>
             </div>
           ) : error ? (
             <div className="error-state">
               <p>❌ Failed to load videos: {error}</p>
-              <button onClick={() => window.location.reload()} className="btn btn-secondary">
-                Retry
-              </button>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                <button onClick={forceRefresh} className="btn btn-primary">
+                  Force Refresh
+                </button>
+                <button onClick={() => window.location.reload()} className="btn btn-secondary">
+                  Reload Page
+                </button>
+              </div>
+              {retryCount > 0 && (
+                <small style={{ display: 'block', marginTop: '4px', color: '#666' }}>
+                  Auto-retry failed {retryCount} times
+                </small>
+              )}
             </div>
           ) : sortedVideos.length === 0 ? (
             <div className="empty-state">
-              <p>📁 No videos found in R2 storage</p>
-              <small>Upload videos to see them here</small>
+              {cloudStatus?.status === 'error' ? (
+                <>
+                  <p>⚠️ R2 Connection Issue</p>
+                  <small>{cloudStatus.error}</small>
+                  <button onClick={forceRefresh} className="btn btn-primary" style={{ marginTop: '8px' }}>
+                    🔄 Retry Connection
+                  </button>
+                </>
+              ) : cloudStatus?.status === 'disconnected' ? (
+                <>
+                  <p>📡 R2 Not Connected</p>
+                  <small>Configure cloud storage in Settings to see videos</small>
+                </>
+              ) : (
+                <>
+                  <p>📁 No videos found in R2 storage</p>
+                  <small>Upload videos to see them here</small>
+                  <button onClick={forceRefresh} className="btn btn-secondary" style={{ marginTop: '8px' }}>
+                    🔄 Check Again
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             sortedVideos.map((video) => (
@@ -243,7 +288,7 @@ export const RepositoryColumn: React.FC<RepositoryColumnProps> = ({ videos }) =>
                 isCompact
                 sourceType="repository"
                 onDelete={handleDeleteVideo}
-                onEdit={setEditingVideo}
+                onEdit={onEditVideo}
                 isSelected={isSelected(video.id)}
                 onToggleSelection={toggleVideoSelection}
               />
@@ -251,17 +296,6 @@ export const RepositoryColumn: React.FC<RepositoryColumnProps> = ({ videos }) =>
           )}
         </div>
       </div>
-      
-      {editingVideo && (
-        <VideoEditModal
-          video={editingVideo}
-          onClose={() => setEditingVideo(null)}
-          onSave={(updatedVideo) => {
-            console.log('Video updated:', updatedVideo);
-            setEditingVideo(null);
-          }}
-        />
-      )}
     </div>
   );
 };
