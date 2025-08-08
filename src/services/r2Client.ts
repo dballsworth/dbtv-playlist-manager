@@ -1,4 +1,4 @@
-import { S3Client, ListObjectsV2Command, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, ListObjectsV2Command, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { R2Config } from '../types';
 
@@ -320,6 +320,98 @@ export class R2Client {
     
     console.log(`🔗 Generated fallback public URL: ${publicUrl}/${key}`);
     return `${publicUrl}/${key}`;
+  }
+
+  /**
+   * Download a file directly from R2 using GetObjectCommand
+   * Returns the file content as a Uint8Array
+   */
+  async getObject(key: string): Promise<{ success: boolean; data?: Uint8Array; error?: string }> {
+    if (!this.s3Client || !this.config) {
+      return { success: false, error: 'Client not configured' };
+    }
+
+    try {
+      console.log(`📥 Downloading file directly from R2: ${key}`);
+      
+      const command = new GetObjectCommand({
+        Bucket: this.config.bucketName,
+        Key: key,
+      });
+
+      const response = await this.s3Client.send(command);
+      
+      if (!response.Body) {
+        return { success: false, error: 'No response body received' };
+      }
+
+      // Convert the stream to Uint8Array using AWS SDK v3 method
+      const data = await response.Body.transformToByteArray();
+      
+      console.log(`✅ Successfully downloaded ${key}: ${data.length} bytes`);
+      return { success: true, data };
+      
+    } catch (error) {
+      console.error(`❌ Failed to download ${key}:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Download failed',
+      };
+    }
+  }
+
+  /**
+   * Upload a Blob (e.g., ZIP file) to R2 storage
+   * Specialized method for uploading generated content like playlist packages
+   */
+  async uploadBlob(
+    key: string, 
+    blob: Blob, 
+    options?: {
+      contentType?: string;
+      metadata?: Record<string, string>;
+    }
+  ): Promise<{ success: boolean; error?: string; etag?: string; publicUrl?: string }> {
+    if (!this.s3Client || !this.config) {
+      return { success: false, error: 'Client not configured' };
+    }
+
+    try {
+      console.log(`📦 Uploading blob to R2: ${key} (${blob.size} bytes)`);
+      
+      // Convert blob to ArrayBuffer for S3 upload
+      const arrayBuffer = await blob.arrayBuffer();
+      
+      const command = new PutObjectCommand({
+        Bucket: this.config.bucketName,
+        Key: key,
+        Body: arrayBuffer,
+        ContentType: options?.contentType || blob.type || 'application/octet-stream',
+        Metadata: options?.metadata,
+      });
+
+      const response = await this.s3Client.send(command);
+      
+      // Generate public URL if possible
+      const publicUrl = this.getPublicUrl(key);
+      
+      console.log(`✅ Successfully uploaded blob to R2: ${key}`);
+      if (publicUrl) {
+        console.log(`🔗 Public URL: ${publicUrl}`);
+      }
+
+      return {
+        success: true,
+        etag: response.ETag,
+        publicUrl: publicUrl || undefined
+      };
+    } catch (error) {
+      console.error(`❌ Failed to upload blob to R2 (${key}):`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Upload failed',
+      };
+    }
   }
 
   /**

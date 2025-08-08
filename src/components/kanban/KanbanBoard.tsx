@@ -10,7 +10,17 @@ import { useVideoData } from '../../hooks/useVideoData';
 import { extractVideoId } from '../../utils/dragUtils';
 
 export const KanbanBoard: React.FC = () => {
-  const { videos, playlists, repositoryVideos, createPlaylist, addVideoToPlaylist, removeVideoFromPlaylist, moveVideoToPlaylist } = useVideoData();
+  const { 
+    videos, 
+    playlists, 
+    repositoryVideos, 
+    createPlaylist, 
+    deletePlaylist, 
+    renamePlaylist, 
+    addVideoToPlaylist, 
+    removeVideoFromPlaylist, 
+    moveVideoToPlaylist 
+  } = useVideoData();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeDragItem, setActiveDragItem] = useState<DragItem | null>(null);
   const [editingVideo, setEditingVideo] = useState<Video | null>(null);
@@ -124,6 +134,8 @@ export const KanbanBoard: React.FC = () => {
             videos={videos.filter(v => playlist.videoIds.includes(v.id))}
             onRemoveVideo={removeVideoFromPlaylist}
             onEditVideo={handleEditVideo}
+            onDeletePlaylist={deletePlaylist}
+            onRenamePlaylist={renamePlaylist}
           />
         ))}
         

@@ -66,7 +66,7 @@ export const SelectionPanel: React.FC<SelectionPanelProps> = ({
                 <div>
                   <div className="item-title">{playlist.name}</div>
                   <div className="item-subtitle">
-                    {playlist.videoIds.length} videos • {formatFileSize(calculatePlaylistSize(playlist))}
+                    {videos.filter(v => playlist.videoIds.includes(v.id)).length} videos • {formatFileSize(calculatePlaylistSize(playlist))}
                   </div>
                 </div>
               </div>

@@ -123,6 +123,32 @@ export const useVideoData = () => {
     }
   }, []);
 
+  const deletePlaylist = useCallback((playlistId: string) => {
+    try {
+      const success = videoService.deletePlaylist(playlistId);
+      if (!success) {
+        setError('Failed to delete playlist - playlist not found');
+      }
+      return success;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete playlist');
+      return false;
+    }
+  }, []);
+
+  const renamePlaylist = useCallback((playlistId: string, newName: string) => {
+    try {
+      const success = videoService.renamePlaylist(playlistId, newName);
+      if (!success) {
+        setError('Failed to rename playlist - playlist not found');
+      }
+      return success;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to rename playlist');
+      return false;
+    }
+  }, []);
+
   const addVideoToPlaylist = useCallback(async (playlistId: string, videoId: string) => {
     try {
       const success = await videoService.addVideoToPlaylist(playlistId, videoId);
@@ -232,6 +258,22 @@ export const useVideoData = () => {
     setError(null);
   }, []);
 
+  // Clear all playlists (fix for stale video references)
+  const clearAllPlaylists = useCallback(() => {
+    videoService.clearAllPlaylists();
+  }, []);
+
+  // Clean up playlist data by removing stale video references
+  const cleanupPlaylists = useCallback(async () => {
+    try {
+      const result = await videoService.cleanupPlaylistData(videos);
+      return result;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to cleanup playlists');
+      return { cleaned: 0, removed: 0 };
+    }
+  }, [videos]);
+
   // Computed values - Repository shows ALL videos to allow multiple playlist usage
   const repositoryVideos = videos;
 
@@ -253,6 +295,8 @@ export const useVideoData = () => {
     
     // Playlist operations
     createPlaylist,
+    deletePlaylist,
+    renamePlaylist,
     addVideoToPlaylist,
     removeVideoFromPlaylist,
     moveVideoToPlaylist,
@@ -268,6 +312,8 @@ export const useVideoData = () => {
     // Utility
     clearError,
     refreshData,
-    forceRefresh
+    forceRefresh,
+    clearAllPlaylists,
+    cleanupPlaylists
   };
 };

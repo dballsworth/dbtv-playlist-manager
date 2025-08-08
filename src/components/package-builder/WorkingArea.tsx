@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Playlist, Video } from '../../types';
-import { X, Folder, FileVideo } from 'lucide-react';
+import { Folder } from 'lucide-react';
 
 interface WorkingAreaProps {
   playlists: Playlist[];
@@ -11,9 +11,17 @@ interface WorkingAreaProps {
     totalPlaylists: number;
     totalSize: number;
   };
+  exportProgress: {
+    isExporting: boolean;
+    progress: number;
+    currentFile: string;
+  };
+  saveProgress: {
+    isSaving: boolean;
+    progress: number;
+    currentFile: string;
+  };
   onPackageNameChange: (name: string) => void;
-  onRemovePlaylist: (playlistId: string) => void;
-  onRemoveVideo: (videoId: string) => void;
   onSave: () => void;
   onExport: () => void;
 }
@@ -23,9 +31,9 @@ export const WorkingArea: React.FC<WorkingAreaProps> = ({
   videos,
   packageName,
   stats,
+  exportProgress,
+  saveProgress,
   onPackageNameChange,
-  onRemovePlaylist,
-  onRemoveVideo,
   onSave,
   onExport
 }) => {
@@ -39,45 +47,29 @@ export const WorkingArea: React.FC<WorkingAreaProps> = ({
       <div className="panel-header">Package Contents</div>
       <div className="panel-content">
         <div className="package-stats">
-          Total: {stats.totalVideos} videos • {formatFileSize(stats.totalSize)}
+          📊 Package Summary: {stats.totalPlaylists} playlists, {stats.totalVideos} videos, {formatFileSize(stats.totalSize)}
         </div>
 
-        <div className="working-items">
-          {playlists.map((playlist) => (
-            <div key={playlist.id} className="working-item">
-              <div className="item-info">
-                <Folder size={16} className="item-icon" />
-                <div>
-                  <div className="item-title">{playlist.name}</div>
-                  <div className="item-subtitle">{playlist.videoIds.length} videos</div>
+        <div className="playlist-summary">
+          <h4>📁 Playlists Included:</h4>
+          {playlists.map((playlist) => {
+            const playlistVideos = videos.filter(v => playlist.videoIds.includes(v.id));
+            const playlistSize = playlistVideos.reduce((sum, video) => sum + video.fileSize, 0);
+            
+            return (
+              <div key={playlist.id} className="playlist-summary-item">
+                <div className="playlist-info">
+                  <Folder size={16} className="playlist-icon" />
+                  <div className="playlist-details">
+                    <div className="playlist-name">{playlist.name}</div>
+                    <div className="playlist-stats">
+                      {videos.filter(v => playlist.videoIds.includes(v.id)).length} videos, {formatFileSize(playlistSize)}
+                    </div>
+                  </div>
                 </div>
               </div>
-              <button 
-                className="remove-btn"
-                onClick={() => onRemovePlaylist(playlist.id)}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          ))}
-
-          {videos.map((video) => (
-            <div key={video.id} className="working-item">
-              <div className="item-info">
-                <FileVideo size={16} className="item-icon" />
-                <div>
-                  <div className="item-title">{video.title}</div>
-                  <div className="item-subtitle">{formatFileSize(video.fileSize)}</div>
-                </div>
-              </div>
-              <button 
-                className="remove-btn"
-                onClick={() => onRemoveVideo(video.id)}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="folder-preview">
@@ -96,6 +88,28 @@ export const WorkingArea: React.FC<WorkingAreaProps> = ({
           ))}
         </div>
 
+        {(exportProgress.isExporting || saveProgress.isSaving) && (
+          <div className="export-progress">
+            <div className="progress-header">
+              <span>
+                {saveProgress.isSaving ? 'Saving Package...' : 'Exporting Package...'}
+              </span>
+              <span>
+                {saveProgress.isSaving ? saveProgress.progress : exportProgress.progress}%
+              </span>
+            </div>
+            <div className="progress-bar">
+              <div 
+                className="progress-fill" 
+                style={{ width: `${saveProgress.isSaving ? saveProgress.progress : exportProgress.progress}%` }}
+              />
+            </div>
+            <div className="progress-status">
+              {saveProgress.isSaving ? saveProgress.currentFile : exportProgress.currentFile}
+            </div>
+          </div>
+        )}
+
         <div className="package-actions">
           <input
             type="text"
@@ -104,11 +118,19 @@ export const WorkingArea: React.FC<WorkingAreaProps> = ({
             onChange={(e) => onPackageNameChange(e.target.value)}
             className="package-name-input"
           />
-          <button className="btn btn-secondary" onClick={onSave}>
-            Save Package
+          <button 
+            className="btn btn-secondary" 
+            onClick={onSave}
+            disabled={saveProgress.isSaving || exportProgress.isExporting}
+          >
+            {saveProgress.isSaving ? 'Saving...' : 'Save Package'}
           </button>
-          <button className="btn btn-primary" onClick={onExport}>
-            Export & Download
+          <button 
+            className="btn btn-primary" 
+            onClick={onExport}
+            disabled={exportProgress.isExporting || saveProgress.isSaving}
+          >
+            {exportProgress.isExporting ? 'Exporting...' : 'Export & Download'}
           </button>
         </div>
       </div>

@@ -5,6 +5,7 @@ export interface ThumbnailResult {
   error?: string;
   width: number;
   height: number;
+  aspectRatio: number; // width / height ratio for proper UI display
 }
 
 export interface ThumbnailOptions {
@@ -19,10 +20,10 @@ export interface ThumbnailOptions {
  */
 export class ThumbnailGenerator {
   private static readonly DEFAULT_OPTIONS: Required<ThumbnailOptions> = {
-    targetWidth: 150,
-    quality: 0.8,
+    targetWidth: 600, // Ultra-high resolution for crisp images
+    quality: 0.98,    // Near-lossless quality
     format: 'jpeg',
-    timeOffset: 1.0 // Capture at 1 second to avoid black frames
+    timeOffset: 1.0   // Capture at 1 second to avoid black frames
   };
 
   /**
@@ -77,7 +78,8 @@ export class ThumbnailGenerator {
                 success: false,
                 error: 'Could not get canvas context',
                 width: 0,
-                height: 0
+                height: 0,
+                aspectRatio: 1
               });
               return;
             }
@@ -106,14 +108,16 @@ export class ThumbnailGenerator {
                     dataUrl,
                     blob,
                     width: thumbnailWidth,
-                    height: thumbnailHeight
+                    height: thumbnailHeight,
+                    aspectRatio: thumbnailWidth / thumbnailHeight
                   });
                 } else {
                   resolve({
                     success: false,
                     error: 'Failed to create thumbnail blob',
                     width: thumbnailWidth,
-                    height: thumbnailHeight
+                    height: thumbnailHeight,
+                    aspectRatio: thumbnailWidth / thumbnailHeight
                   });
                 }
               },
@@ -127,7 +131,8 @@ export class ThumbnailGenerator {
               success: false,
               error: error instanceof Error ? error.message : 'Failed to generate thumbnail',
               width: 0,
-              height: 0
+              height: 0,
+              aspectRatio: 1
             });
           }
         };
@@ -138,7 +143,8 @@ export class ThumbnailGenerator {
             success: false,
             error: `Video load error: ${error}`,
             width: 0,
-            height: 0
+            height: 0,
+            aspectRatio: 1
           });
         };
         
@@ -148,7 +154,8 @@ export class ThumbnailGenerator {
             success: false,
             error: 'Video load aborted',
             width: 0,
-            height: 0
+            height: 0,
+            aspectRatio: 1
           });
         };
         
@@ -162,7 +169,8 @@ export class ThumbnailGenerator {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
         width: 0,
-        height: 0
+        height: 0,
+        aspectRatio: 1
       };
     }
   }

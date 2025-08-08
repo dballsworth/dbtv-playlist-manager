@@ -3,23 +3,25 @@ import { ThumbnailGenerator } from '../utils/thumbnailGenerator';
 import { r2Client } from '../services/r2Client';
 import type { Video } from '../types';
 
-// Cache for generated thumbnail data URLs to avoid regenerating them
-const thumbnailCache = new Map<string, string>();
+// Cache for generated thumbnail data URLs and aspect ratios to avoid regenerating them
+const thumbnailCache = new Map<string, { dataUrl: string; aspectRatio: number }>();
 
 interface ThumbnailState {
   dataUrl: string | null;
   isLoading: boolean;
   error: string | null;
+  aspectRatio: number | null;
 }
 
 export const useThumbnail = (video: Video) => {
   const [state, setState] = useState<ThumbnailState>({
     dataUrl: null,
     isLoading: false,
-    error: null
+    error: null,
+    aspectRatio: null
   });
 
-  const generateThumbnailFromR2 = useCallback(async (video: Video): Promise<string | null> => {
+  const generateThumbnailFromR2 = useCallback(async (video: Video): Promise<{ dataUrl: string; aspectRatio: number } | null> => {
     if (!video.r2Storage?.key) {
       return null;
     }
@@ -51,18 +53,19 @@ export const useThumbnail = (video: Video) => {
       // Create a File object from the blob for ThumbnailGenerator
       const videoFile = new File([videoBlob], video.filename, { type: videoBlob.type || 'video/mp4' });
       
-      // Generate thumbnail using the same method as upload dialog
+      // Generate thumbnail using ultra-high-quality settings
       const result = await ThumbnailGenerator.generateThumbnail(videoFile, {
-        targetWidth: 150,
-        quality: 0.8,
+        targetWidth: 600,
+        quality: 0.98,
         format: 'jpeg'
       });
 
       if (result.success && result.dataUrl) {
-        // Cache the result
-        thumbnailCache.set(cacheKey, result.dataUrl);
-        console.log(`✅ Generated and cached thumbnail for ${video.title}`);
-        return result.dataUrl;
+        // Cache the result with aspect ratio
+        const thumbnailData = { dataUrl: result.dataUrl, aspectRatio: result.aspectRatio };
+        thumbnailCache.set(cacheKey, thumbnailData);
+        console.log(`✅ Generated and cached thumbnail for ${video.title} (aspect ratio: ${result.aspectRatio})`);
+        return thumbnailData;
       } else {
         throw new Error(result.error || 'Failed to generate thumbnail');
       }
@@ -76,10 +79,12 @@ export const useThumbnail = (video: Video) => {
     // Priority 1: Check if we already have a generated thumbnail in cache
     const cacheKey = video.r2Storage?.key;
     if (cacheKey && thumbnailCache.has(cacheKey)) {
+      const cached = thumbnailCache.get(cacheKey)!;
       setState({
-        dataUrl: thumbnailCache.get(cacheKey)!,
+        dataUrl: cached.dataUrl,
         isLoading: false,
-        error: null
+        error: null,
+        aspectRatio: cached.aspectRatio
       });
       return;
     }
@@ -93,7 +98,8 @@ export const useThumbnail = (video: Video) => {
           setState({
             dataUrl: video.r2Storage.thumbnailUrl,
             isLoading: false,
-            error: null
+            error: null,
+            aspectRatio: 16/9 // Default aspect ratio for R2 thumbnails since we don't know the actual ratio
           });
           return;
         }
@@ -105,19 +111,21 @@ export const useThumbnail = (video: Video) => {
     // Priority 3: Generate thumbnail from video file
     setState(prev => ({ ...prev, isLoading: true, error: null }));
     
-    const dataUrl = await generateThumbnailFromR2(video);
+    const thumbnailData = await generateThumbnailFromR2(video);
     
-    if (dataUrl) {
+    if (thumbnailData) {
       setState({
-        dataUrl,
+        dataUrl: thumbnailData.dataUrl,
         isLoading: false,
-        error: null
+        error: null,
+        aspectRatio: thumbnailData.aspectRatio
       });
     } else {
       setState({
         dataUrl: null,
         isLoading: false,
-        error: 'Failed to generate thumbnail'
+        error: 'Failed to generate thumbnail',
+        aspectRatio: null
       });
     }
   }, [video, generateThumbnailFromR2]);

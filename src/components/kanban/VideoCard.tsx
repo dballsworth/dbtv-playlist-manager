@@ -32,7 +32,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   onToggleSelection
 }) => {
   // const { getVideoUrl } = useVideoData(); // For future video URL usage
-  const { dataUrl: thumbnailDataUrl, isLoading: thumbnailLoading, error: thumbnailError } = useThumbnail(video);
+  const { dataUrl: thumbnailDataUrl, isLoading: thumbnailLoading, error: thumbnailError, aspectRatio } = useThumbnail(video);
   const dragId = createDragId(video.id, sourceType, sourceId);
   
   // Use draggable for all videos to enable cross-container dragging
@@ -137,9 +137,21 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         {...listeners}
         {...attributes}
       >
-        <div className={`card-thumbnail ${isCompact ? 'repository-thumbnail' : ''}`}>
+        <div 
+          className={`card-thumbnail ${isCompact ? 'repository-thumbnail' : ''}`}
+          style={{
+            aspectRatio: aspectRatio && aspectRatio > 0 ? aspectRatio : undefined,
+            height: aspectRatio && aspectRatio > 0 ? 'auto' : undefined
+          }}
+        >
           {thumbnailDataUrl ? (
-            <img src={thumbnailDataUrl} alt={video.title} />
+            <img 
+              src={thumbnailDataUrl} 
+              alt={video.title}
+              style={{ 
+                aspectRatio: aspectRatio && aspectRatio > 0 ? aspectRatio : undefined 
+              }}
+            />
           ) : thumbnailLoading ? (
             <div className="thumbnail-placeholder">
               <Loader size={16} className="thumbnail-loading" />

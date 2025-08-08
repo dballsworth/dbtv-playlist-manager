@@ -1,72 +1,224 @@
-import React, { useState } from 'react';
-import { SelectionPanel } from './SelectionPanel';
+import React, { useState, useEffect } from 'react';
 import { WorkingArea } from './WorkingArea';
-import { useMockData } from '../../hooks/useMockData';
+import { useVideoData } from '../../hooks/useVideoData';
+import { ZipService } from '../../services/zipService';
+import { ExportService } from '../../services/exportService';
+
+// Generate auto timestamp for package name
+const generatePackageName = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = (now.getMonth() + 1).toString().padStart(2, '0');
+  const day = now.getDate().toString().padStart(2, '0');
+  const hour = now.getHours().toString().padStart(2, '0');
+  const minute = now.getMinutes().toString().padStart(2, '0');
+  return `Package-${year}-${month}-${day}-${hour}-${minute}`;
+};
 
 export const PackageBuilder: React.FC = () => {
-  const { videos, playlists } = useMockData();
-  const [selectedPlaylists, setSelectedPlaylists] = useState<string[]>([]);
-  const [selectedVideos, setSelectedVideos] = useState<string[]>([]);
+  const { videos, playlists } = useVideoData();
   const [packageName, setPackageName] = useState('');
-  const [activeTab, setActiveTab] = useState<'playlists' | 'videos'>('playlists');
+  const [exportProgress, setExportProgress] = useState<{
+    isExporting: boolean;
+    progress: number;
+    currentFile: string;
+  }>({ isExporting: false, progress: 0, currentFile: '' });
 
-  const handlePlaylistToggle = (playlistId: string) => {
-    setSelectedPlaylists(prev =>
-      prev.includes(playlistId)
-        ? prev.filter(id => id !== playlistId)
-        : [...prev, playlistId]
-    );
-  };
+  const [saveProgress, setSaveProgress] = useState<{
+    isSaving: boolean;
+    progress: number;
+    currentFile: string;
+  }>({ isSaving: false, progress: 0, currentFile: '' });
 
-  const handleVideoToggle = (videoId: string) => {
-    setSelectedVideos(prev =>
-      prev.includes(videoId)
-        ? prev.filter(id => id !== videoId)
-        : [...prev, videoId]
-    );
-  };
+  // Auto-generate package name on mount
+  useEffect(() => {
+    setPackageName(generatePackageName());
+  }, []);
 
-  const handleRemovePlaylist = (playlistId: string) => {
-    setSelectedPlaylists(prev => prev.filter(id => id !== playlistId));
-  };
+  // Filter out empty playlists (playlists with no actual existing videos)
+  const nonEmptyPlaylists = playlists.filter(playlist => 
+    videos.filter(v => playlist.videoIds.includes(v.id)).length > 0
+  );
 
-  const handleRemoveVideo = (videoId: string) => {
-    setSelectedVideos(prev => prev.filter(id => id !== videoId));
+  // Get all videos from all non-empty playlists
+  const getAllPackageVideos = () => {
+    const allVideoIds = new Set(nonEmptyPlaylists.flatMap(p => p.videoIds));
+    return videos.filter(v => allVideoIds.has(v.id));
   };
 
   const calculatePackageStats = () => {
-    const selectedPlaylistObjs = playlists.filter(p => selectedPlaylists.includes(p.id));
-    const allVideoIds = new Set([
-      ...selectedVideos,
-      ...selectedPlaylistObjs.flatMap(p => p.videoIds)
-    ]);
-    
-    const uniqueVideos = videos.filter(v => allVideoIds.has(v.id));
-    const totalSize = uniqueVideos.reduce((sum, video) => sum + video.fileSize, 0);
+    const packageVideos = getAllPackageVideos();
+    const totalSize = packageVideos.reduce((sum, video) => sum + video.fileSize, 0);
     
     return {
-      totalVideos: uniqueVideos.length,
-      totalPlaylists: selectedPlaylists.length,
+      totalVideos: packageVideos.length,
+      totalPlaylists: nonEmptyPlaylists.length,
       totalSize
     };
   };
 
-  const handleExport = () => {
-    // TODO: Implement export functionality
-    console.log('Exporting package:', {
-      name: packageName,
-      playlists: selectedPlaylists,
-      videos: selectedVideos
+  const handleExport = async () => {
+    if (exportProgress.isExporting) return;
+    
+    const packageVideos = getAllPackageVideos();
+    
+    // Basic validation
+    if (packageVideos.length === 0) {
+      alert('No videos found in playlists. Please add videos to your playlists first.');
+      return;
+    }
+
+    if (nonEmptyPlaylists.length === 0) {
+      alert('No playlists found. Please create playlists with videos first.');
+      return;
+    }
+
+    // Validate playlist integrity and warn about missing videos
+    const validationIssues: string[] = [];
+    let totalMissingVideos = 0;
+
+    nonEmptyPlaylists.forEach(playlist => {
+      const validation = ExportService.validatePlaylistIntegrity(playlist, videos);
+      if (!validation.isValid) {
+        totalMissingVideos += validation.missingVideoIds.length;
+        validationIssues.push(`• ${playlist.name}: ${validation.missingVideoIds.length} missing videos`);
+      }
     });
+
+    // Show warning if there are missing videos
+    if (validationIssues.length > 0) {
+      const warningMessage = [
+        `Warning: Found ${totalMissingVideos} missing video references:`,
+        ...validationIssues,
+        '',
+        'These videos will be automatically excluded from the export.',
+        'Do you want to continue?'
+      ].join('\n');
+
+      if (!confirm(warningMessage)) {
+        return;
+      }
+    }
+
+    try {
+      setExportProgress({ isExporting: true, progress: 0, currentFile: 'Preparing export...' });
+      
+      const result = await ZipService.exportPackageWithR2(
+        packageName || 'untitled-package',
+        packageVideos,
+        nonEmptyPlaylists,
+        (progress: { completed: number; total: number; currentFile: string }) => {
+          setExportProgress({
+            isExporting: true,
+            progress: progress.completed,
+            currentFile: progress.currentFile
+          });
+        }
+      );
+      
+      // Show R2 upload result if relevant
+      if (result.success && result.r2Key) {
+        console.log(`✅ Package also saved to R2: ${result.r2Key}`);
+      } else if (result.error) {
+        console.warn(`⚠️ R2 upload failed: ${result.error}`);
+      }
+      
+      setExportProgress({ isExporting: false, progress: 100, currentFile: 'Export completed!' });
+      
+      // Reset progress after a short delay
+      setTimeout(() => {
+        setExportProgress({ isExporting: false, progress: 0, currentFile: '' });
+      }, 2000);
+      
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert(`Export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setExportProgress({ isExporting: false, progress: 0, currentFile: '' });
+    }
   };
 
-  const handleSave = () => {
-    // TODO: Implement save functionality
-    console.log('Saving package:', {
-      name: packageName,
-      playlists: selectedPlaylists,
-      videos: selectedVideos
+  const handleSave = async () => {
+    if (saveProgress.isSaving) return;
+    
+    const packageVideos = getAllPackageVideos();
+    
+    // Basic validation
+    if (packageVideos.length === 0) {
+      alert('No videos found in playlists. Please add videos to your playlists first.');
+      return;
+    }
+
+    if (nonEmptyPlaylists.length === 0) {
+      alert('No playlists found. Please create playlists with videos first.');
+      return;
+    }
+
+    // Validation (same as export)
+    const validationIssues: string[] = [];
+    let totalMissingVideos = 0;
+
+    nonEmptyPlaylists.forEach(playlist => {
+      const validation = ExportService.validatePlaylistIntegrity(playlist, videos);
+      if (!validation.isValid) {
+        totalMissingVideos += validation.missingVideoIds.length;
+        validationIssues.push(`• ${playlist.name}: ${validation.missingVideoIds.length} missing videos`);
+      }
     });
+
+    // Show warning if there are missing videos
+    if (validationIssues.length > 0) {
+      const warningMessage = [
+        `Warning: Found ${totalMissingVideos} missing video references:`,
+        ...validationIssues,
+        '',
+        'These videos will be automatically excluded from the package.',
+        'Do you want to continue?'
+      ].join('\n');
+
+      if (!confirm(warningMessage)) {
+        return;
+      }
+    }
+
+    try {
+      setSaveProgress({ isSaving: true, progress: 0, currentFile: 'Preparing save...' });
+      
+      const result = await ZipService.savePackageToR2(
+        packageName || 'untitled-package',
+        packageVideos,
+        nonEmptyPlaylists,
+        (progress: { completed: number; total: number; currentFile: string }) => {
+          setSaveProgress({
+            isSaving: true,
+            progress: progress.completed,
+            currentFile: progress.currentFile
+          });
+        }
+      );
+      
+      if (result.success) {
+        setSaveProgress({ isSaving: false, progress: 100, currentFile: 'Package saved to R2!' });
+        
+        // Show success message with details
+        const successMessage = result.publicUrl
+          ? `Package saved successfully to R2!\n\nStorage path: ${result.r2Key}\nPublic URL: ${result.publicUrl}`
+          : `Package saved successfully to R2!\n\nStorage path: ${result.r2Key}`;
+        
+        alert(successMessage);
+        
+        // Reset progress after a short delay
+        setTimeout(() => {
+          setSaveProgress({ isSaving: false, progress: 0, currentFile: '' });
+        }, 2000);
+      } else {
+        throw new Error(result.error || 'Save failed');
+      }
+      
+    } catch (error) {
+      console.error('Save failed:', error);
+      alert(`Save failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setSaveProgress({ isSaving: false, progress: 0, currentFile: '' });
+    }
   };
 
   const stats = calculatePackageStats();
@@ -74,25 +226,14 @@ export const PackageBuilder: React.FC = () => {
   return (
     <div className="package-builder">
       <div className="packaging-layout">
-        <SelectionPanel
-          playlists={playlists}
-          videos={videos}
-          selectedPlaylists={selectedPlaylists}
-          selectedVideos={selectedVideos}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          onPlaylistToggle={handlePlaylistToggle}
-          onVideoToggle={handleVideoToggle}
-        />
-        
         <WorkingArea
-          playlists={playlists.filter(p => selectedPlaylists.includes(p.id))}
-          videos={videos.filter(v => selectedVideos.includes(v.id))}
+          playlists={nonEmptyPlaylists}
+          videos={getAllPackageVideos()}
           packageName={packageName}
           stats={stats}
+          exportProgress={exportProgress}
+          saveProgress={saveProgress}
           onPackageNameChange={setPackageName}
-          onRemovePlaylist={handleRemovePlaylist}
-          onRemoveVideo={handleRemoveVideo}
           onSave={handleSave}
           onExport={handleExport}
         />

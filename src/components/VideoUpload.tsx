@@ -105,8 +105,8 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
         console.log(`📁 Video R2 key: ${upload.r2Key}`);
         
         const result = await ThumbnailGenerator.generateThumbnail(upload.file, {
-          targetWidth: 150,
-          quality: 0.8,
+          targetWidth: 600,
+          quality: 0.98,
           format: 'jpeg'
         });
 

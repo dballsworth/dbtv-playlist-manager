@@ -102,6 +102,12 @@ export class VideoService {
       const validVideos = r2Videos.filter(video => video !== null) as Video[];
       
       console.log(`Successfully fetched ${validVideos.length} videos from R2`);
+      
+      // Always clean up playlist data after loading videos
+      if (validVideos.length > 0) {
+        await this.cleanupPlaylistData(validVideos);
+      }
+      
       return validVideos;
     } catch (error) {
       console.error('Failed to fetch videos from R2:', error);
@@ -276,6 +282,35 @@ export class VideoService {
     return newPlaylist;
   }
 
+  deletePlaylist(playlistId: string): boolean {
+    const index = this.playlists.findIndex(p => p.id === playlistId);
+    if (index === -1) {
+      return false;
+    }
+
+    console.log(`Deleting playlist: ${this.playlists[index].name}`);
+    this.playlists.splice(index, 1);
+    this.saveToStorage();
+    this.notify();
+    
+    return true;
+  }
+
+  renamePlaylist(playlistId: string, newName: string): boolean {
+    const playlist = this.playlists.find(p => p.id === playlistId);
+    if (!playlist) {
+      return false;
+    }
+
+    console.log(`Renaming playlist from "${playlist.name}" to "${newName}"`);
+    playlist.name = newName;
+    playlist.lastModified = new Date();
+    this.saveToStorage();
+    this.notify();
+    
+    return true;
+  }
+
   async addVideoToPlaylist(playlistId: string, videoId: string): Promise<boolean> {
     const playlist = this.playlists.find(p => p.id === playlistId);
     
@@ -436,10 +471,15 @@ export class VideoService {
         console.warn(`Could not check thumbnail existence for ${filename}:`, error);
       }
 
+      // Generate public URL for the video
+      const videoPublicUrl = r2Client.getPublicUrl(r2Object.key);
+      console.log(`🔗 Generated public URL for ${filename}: ${videoPublicUrl}`);
+
       const r2Storage: R2StorageInfo = {
         key: r2Object.key,
         bucket: r2Client.getConfig()?.bucketName || 'unknown',
         etag: r2Object.etag,
+        publicUrl: videoPublicUrl || undefined,
         uploadDate: r2Object.lastModified,
         thumbnailKey,
         thumbnailUrl // Always use freshly generated URL to fix cached URL issues
@@ -589,6 +629,84 @@ export class VideoService {
       console.error('Failed to mark video as orphaned:', error);
       return false;
     }
+  }
+
+  // Clear all playlist data (Option 1 fix for stale video references)
+  clearAllPlaylists(): void {
+    console.log('Clearing all playlist data...');
+    this.playlists = [];
+    this.saveToStorage();
+    this.notify();
+    console.log('All playlists cleared. Users can now recreate playlists with current video IDs.');
+  }
+
+  // Clean up playlist data by removing stale video references
+  async cleanupPlaylistData(videos: Video[]): Promise<{ cleaned: number; removed: number }> {
+    console.log('🧹 Starting playlist cleanup...');
+    
+    const currentVideoIds = new Set(videos.map(v => v.id));
+    let totalCleaned = 0;
+    let totalRemoved = 0;
+    let hasChanges = false;
+
+    const cleanedPlaylists = this.playlists.map(playlist => {
+      const originalVideoCount = playlist.videoIds.length;
+      const originalOrderCount = playlist.videoOrder.length;
+
+      // Filter out stale video IDs
+      const cleanVideoIds = playlist.videoIds.filter(id => currentVideoIds.has(id));
+      const cleanVideoOrder = playlist.videoOrder.filter(id => currentVideoIds.has(id));
+
+      const removedFromIds = originalVideoCount - cleanVideoIds.length;
+      const removedFromOrder = originalOrderCount - cleanVideoOrder.length;
+
+      if (removedFromIds > 0 || removedFromOrder > 0) {
+        console.log(`🧹 Cleaned playlist "${playlist.name}": removed ${removedFromIds} stale IDs, ${removedFromOrder} from order`);
+        totalCleaned++;
+        hasChanges = true;
+      }
+
+      return {
+        ...playlist,
+        videoIds: cleanVideoIds,
+        videoOrder: cleanVideoOrder,
+        lastModified: removedFromIds > 0 || removedFromOrder > 0 ? new Date() : playlist.lastModified,
+        metadata: {
+          ...playlist.metadata,
+          videoCount: cleanVideoIds.length
+        }
+      };
+    });
+
+    // Only remove playlists that became empty due to cleanup (had videos that were removed)
+    // Keep playlists that were originally empty (user intent to add videos later)
+    const playlistsToKeep = cleanedPlaylists.filter(playlist => {
+      const originalPlaylist = this.playlists.find(p => p.id === playlist.id);
+      const wasOriginuallyEmpty = originalPlaylist ? originalPlaylist.videoIds.length === 0 : false;
+      const isNowEmpty = playlist.videoIds.length === 0;
+      
+      // Keep if: not empty, or was originally empty (intentionally created empty)
+      return !isNowEmpty || wasOriginuallyEmpty;
+    });
+    
+    totalRemoved = cleanedPlaylists.length - playlistsToKeep.length;
+
+    if (totalRemoved > 0) {
+      console.log(`🗑️ Removed ${totalRemoved} playlists that became empty due to cleanup`);
+      hasChanges = true;
+    }
+
+    // Only save and notify if there were actual changes
+    if (hasChanges) {
+      this.playlists = playlistsToKeep;
+      this.saveToStorage();
+      this.notify();
+      console.log(`✅ Playlist cleanup completed: cleaned ${totalCleaned} playlists, removed ${totalRemoved} empty playlists`);
+    } else {
+      console.log(`✅ Playlist cleanup completed: no changes needed`);
+    }
+    
+    return { cleaned: totalCleaned, removed: totalRemoved };
   }
 
   // Generate consistent video ID from R2 key
