@@ -81,15 +81,15 @@ export interface VideoExportEntry {
   duration_seconds: number;
   duration_formatted: string; // HH:MM:SS format
   thumbnail: string; // relative path to thumbnail
-  mood: 'ambient' | 'high-energy' | 'psychedelic';
+  mood: string; // Now uses playlist name directly
   resolution: string;
-  category: 'background_visuals' | 'performance_visuals' | 'ambient_visuals';
+  category: string; // Now uses playlist name directly
 }
 
 export interface PlaylistExport {
   name: string;
   description: string;
-  mood: 'ambient' | 'high-energy' | 'psychedelic';
+  mood: string; // Now uses playlist name directly
   loop: boolean;
   videos: PlaylistVideoEntry[];
 }

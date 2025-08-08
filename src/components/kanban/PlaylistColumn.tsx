@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useDroppable } from '@dnd-kit/core';
 import { VideoCard } from './VideoCard';
 import type { Video, Playlist } from '../../types';
@@ -11,6 +12,8 @@ interface PlaylistColumnProps {
   onEditVideo?: (video: Video) => void;
   onDeletePlaylist?: (playlistId: string) => void;
   onRenamePlaylist?: (playlistId: string, newName: string) => void;
+  dragOverId?: string | null;
+  insertionIndex?: number | null;
 }
 
 export const PlaylistColumn: React.FC<PlaylistColumnProps> = ({ 
@@ -19,26 +22,14 @@ export const PlaylistColumn: React.FC<PlaylistColumnProps> = ({
   onRemoveVideo, 
   onEditVideo, 
   onDeletePlaylist, 
-  onRenamePlaylist 
+  onRenamePlaylist,
+  dragOverId,
+  insertionIndex
 }) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(playlist.name);
   const dropdownRef = useRef<HTMLDivElement>(null);
-
-  const {
-    isOver,
-    setNodeRef,
-  } = useDroppable({
-    id: `playlist-${playlist.id}`,
-  });
-
-  // Debug logging for drop events
-  React.useEffect(() => {
-    if (isOver) {
-      console.log(`🎯 Video being dragged over playlist: ${playlist.name} (${playlist.id})`);
-    }
-  }, [isOver, playlist.name, playlist.id]);
 
   const handleRemoveVideo = async (videoId: string) => {
     if (onRemoveVideo) {
@@ -101,6 +92,41 @@ export const PlaylistColumn: React.FC<PlaylistColumnProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showDropdown]);
+
+  // Create sorted video list based on playlist's videoOrder
+  const sortedVideos = React.useMemo(() => {
+    if (!playlist.videoOrder || playlist.videoOrder.length === 0) {
+      return videos;
+    }
+    
+    // Sort videos according to the order specified in playlist.videoOrder
+    return videos.sort((a, b) => {
+      const aIndex = playlist.videoOrder.indexOf(a.id);
+      const bIndex = playlist.videoOrder.indexOf(b.id);
+      
+      // If video is not in the order array, put it at the end
+      if (aIndex === -1) return 1;
+      if (bIndex === -1) return -1;
+      
+      return aIndex - bIndex;
+    });
+  }, [videos, playlist.videoOrder]);
+
+  // Create sortable IDs for the videos in this playlist
+  const sortableIds = sortedVideos.map(video => `playlist:${playlist.id}:${video.id}`);
+  
+  // Set up droppable for empty playlists
+  const { setNodeRef: setDroppableRef, isOver } = useDroppable({
+    id: `playlist-${playlist.id}`,
+    disabled: videos.length > 0, // Only enable when playlist is empty
+  });
+  
+  // Check if we're currently being dragged over
+  // This covers: intra-playlist sorting, cross-container drops, and empty playlist drops
+  const isDraggedOver = (dragOverId && (
+    dragOverId.startsWith(`playlist-${playlist.id}`) || 
+    dragOverId.includes(`playlist:${playlist.id}:`)
+  )) || isOver;
 
   return (
     <div className="kanban-column">
@@ -202,23 +228,48 @@ export const PlaylistColumn: React.FC<PlaylistColumnProps> = ({
           )}
         </div>
       </div>
-      <div 
-        ref={setNodeRef}
-        className={`column-content ${isOver ? 'drag-over' : ''}`}
-      >
-        {videos.map((video) => (
-          <VideoCard
-            key={video.id}
-            video={video}
-            sourceType="playlist"
-            sourceId={playlist.id}
-            onRemove={handleRemoveVideo}
-            onEdit={onEditVideo}
-          />
-        ))}
-        
-        {videos.length === 0 && (
-          <div className="empty-playlist">
+      <div className="column-content">
+        {videos.length > 0 ? (
+          <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+            {sortedVideos.map((video, index) => (
+              <React.Fragment key={video.id}>
+                {/* Show insertion indicator before this video for both intra-playlist and cross-container drops */}
+                {isDraggedOver && insertionIndex !== null && insertionIndex !== undefined && insertionIndex === index && (
+                  <div className="drop-insertion-indicator" key={`before-${index}`}>
+                    <div className="drop-line"></div>
+                    <div className="drop-text">Drop here</div>
+                  </div>
+                )}
+                <VideoCard
+                  video={video}
+                  sourceType="playlist"
+                  sourceId={playlist.id}
+                  onRemove={handleRemoveVideo}
+                  onEdit={onEditVideo}
+                />
+                {/* Show insertion indicator after this video for both intra-playlist and cross-container drops */}
+                {isDraggedOver && insertionIndex !== null && insertionIndex !== undefined && insertionIndex === index + 1 && (
+                  <div className="drop-insertion-indicator" key={`after-${index}`}>
+                    <div className="drop-line"></div>
+                    <div className="drop-text">Drop here</div>
+                  </div>
+                )}
+              </React.Fragment>
+            ))}
+            
+            {/* Show insertion indicator at the end for both intra-playlist and cross-container drops */}
+            {isDraggedOver && insertionIndex !== null && insertionIndex !== undefined && insertionIndex >= sortedVideos.length && (
+              <div className="drop-insertion-indicator" key="end">
+                <div className="drop-line"></div>
+                <div className="drop-text">Drop here</div>
+              </div>
+            )}
+          </SortableContext>
+        ) : (
+          <div 
+            ref={setDroppableRef}
+            className={`empty-playlist ${isDraggedOver ? 'drag-over' : ''}`}
+          >
             <p>Drop videos here</p>
           </div>
         )}

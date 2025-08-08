@@ -4,6 +4,7 @@ import { r2Client } from '../services/r2Client';
 import { useSettings } from '../hooks/useSettings';
 import { useVideoData } from '../hooks/useVideoData';
 import { ThumbnailGenerator } from '../utils/thumbnailGenerator';
+import { DurationExtractor } from '../utils/durationExtractor';
 
 interface UploadFile {
   id: string;
@@ -14,6 +15,7 @@ interface UploadFile {
   r2Key?: string;
   thumbnailR2Key?: string;
   thumbnailDataUrl?: string;
+  videoDuration?: number; // Duration in seconds extracted from video
 }
 
 interface VideoUploadProps {
@@ -110,17 +112,20 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
           format: 'jpeg'
         });
 
-        console.log(`📸 Thumbnail generation result:`, { 
+        console.log(`📸 [VideoUpload] Thumbnail generation result for ${upload.file.name}:`, { 
           success: result.success, 
           hasDataUrl: !!result.dataUrl, 
           error: result.error,
-          dimensions: `${result.width}x${result.height}`
+          dimensions: `${result.width}x${result.height}`,
+          videoDuration: result.videoDuration,
+          videoDurationType: typeof result.videoDuration
         });
 
         if (result.success && result.dataUrl) {
           // Use the pre-generated R2 key for thumbnail
           const thumbnailR2Key = ThumbnailGenerator.generateThumbnailR2Key(upload.r2Key!, 'jpeg');
           console.log(`📁 Thumbnail R2 key: ${thumbnailR2Key}`);
+          console.log(`⏱️ [VideoUpload] Video duration captured: ${result.videoDuration}s (type: ${typeof result.videoDuration})`);
 
           setUploads(prev => prev.map(u => 
             u.id === upload.id 
@@ -128,26 +133,57 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
                   ...u, 
                   status: 'pending', 
                   thumbnailDataUrl: result.dataUrl,
-                  thumbnailR2Key 
+                  thumbnailR2Key,
+                  videoDuration: result.videoDuration
                 }
               : u
           ));
           
-          console.log(`✅ Thumbnail generated successfully for ${upload.file.name}`);
+          console.log(`✅ Thumbnail generated successfully for ${upload.file.name}${result.videoDuration ? `, duration: ${result.videoDuration}s` : ''}`);
         } else {
           console.error(`❌ Failed to generate thumbnail for ${upload.file.name}:`, result.error);
+          
+          // If thumbnail generation failed but didn't capture duration, try fallback extraction
+          let finalDuration = result.videoDuration;
+          if (!finalDuration) {
+            console.log(`🔄 Attempting fallback duration extraction for ${upload.file.name}...`);
+            try {
+              finalDuration = await DurationExtractor.extractDuration(upload.file);
+              console.log(`⏱️ Fallback duration extraction result: ${finalDuration}s`);
+            } catch (error) {
+              console.warn(`⚠️ Fallback duration extraction failed for ${upload.file.name}:`, error);
+            }
+          }
+          
           // Still set back to pending so video can be uploaded without thumbnail
+          // But capture duration if available even when thumbnail generation failed
           setUploads(prev => prev.map(u => 
             u.id === upload.id 
-              ? { ...u, status: 'pending', error: `Thumbnail generation failed: ${result.error}` }
+              ? { 
+                  ...u, 
+                  status: 'pending', 
+                  error: `Thumbnail generation failed: ${result.error}`,
+                  videoDuration: finalDuration
+                }
               : u
           ));
         }
       } catch (error) {
         console.error(`Failed to generate thumbnail for ${upload.file.name}:`, error);
+        
+        // Try fallback duration extraction even when thumbnail generation completely failed
+        let fallbackDuration: number | undefined = undefined;
+        try {
+          console.log(`🔄 Attempting fallback duration extraction after error for ${upload.file.name}...`);
+          fallbackDuration = await DurationExtractor.extractDuration(upload.file);
+          console.log(`⏱️ Fallback duration extraction result: ${fallbackDuration}s`);
+        } catch (durationError) {
+          console.warn(`⚠️ Fallback duration extraction also failed for ${upload.file.name}:`, durationError);
+        }
+        
         setUploads(prev => prev.map(u => 
           u.id === upload.id 
-            ? { ...u, status: 'pending' }
+            ? { ...u, status: 'pending', videoDuration: fallbackDuration }
             : u
         ));
       }
@@ -254,11 +290,13 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
       console.log(`🎬 Creating video record after both uploads completed`);
       
       // Create video record in the service AFTER both video and thumbnail uploads
+      console.log(`📽️ [VideoUpload] Creating video record with duration: ${upload.videoDuration}s for ${upload.file.name}`);
       await createVideoFromUpload({
         id: upload.id,
         file: upload.file,
         r2Key,
-        thumbnailR2Key: thumbnailUploadSuccess ? upload.thumbnailR2Key : undefined
+        thumbnailR2Key: thumbnailUploadSuccess ? upload.thumbnailR2Key : undefined,
+        videoDuration: upload.videoDuration
       });
 
       setUploads(prev => prev.map(u => 

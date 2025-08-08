@@ -11,6 +11,7 @@ interface ThumbnailState {
   isLoading: boolean;
   error: string | null;
   aspectRatio: number | null;
+  imageLoadError?: boolean;
 }
 
 export const useThumbnail = (video: Video) => {
@@ -18,7 +19,8 @@ export const useThumbnail = (video: Video) => {
     dataUrl: null,
     isLoading: false,
     error: null,
-    aspectRatio: null
+    aspectRatio: null,
+    imageLoadError: false
   });
 
   const generateThumbnailFromR2 = useCallback(async (video: Video): Promise<{ dataUrl: string; aspectRatio: number } | null> => {
@@ -70,12 +72,20 @@ export const useThumbnail = (video: Video) => {
         throw new Error(result.error || 'Failed to generate thumbnail');
       }
     } catch (error) {
-      console.error(`❌ Failed to generate thumbnail for ${video.title}:`, error);
+      // Check if this is a CORS error
+      const isCorsError = error instanceof TypeError && 
+        (error.message.includes('CORS') || error.message.includes('Network request failed'));
+      
+      if (isCorsError) {
+        console.error(`🚫 CORS issue preventing thumbnail generation for ${video.title} - check R2 CORS configuration`);
+      } else {
+        console.error(`❌ Failed to generate thumbnail for ${video.title}:`, error);
+      }
       return null;
     }
   }, []);
 
-  const loadThumbnail = useCallback(async () => {
+  const loadThumbnail = useCallback(async (skipR2Thumbnail = false) => {
     // Priority 1: Check if we already have a generated thumbnail in cache
     const cacheKey = video.r2Storage?.key;
     if (cacheKey && thumbnailCache.has(cacheKey)) {
@@ -84,32 +94,27 @@ export const useThumbnail = (video: Video) => {
         dataUrl: cached.dataUrl,
         isLoading: false,
         error: null,
-        aspectRatio: cached.aspectRatio
+        aspectRatio: cached.aspectRatio,
+        imageLoadError: false
       });
       return;
     }
 
-    // Priority 2: Try R2 thumbnail URL (if it works)
-    if (video.r2Storage?.thumbnailUrl) {
-      try {
-        const response = await fetch(video.r2Storage.thumbnailUrl, { method: 'HEAD' });
-        if (response.ok) {
-          console.log(`✅ Using R2 thumbnail URL for ${video.title}`);
-          setState({
-            dataUrl: video.r2Storage.thumbnailUrl,
-            isLoading: false,
-            error: null,
-            aspectRatio: 16/9 // Default aspect ratio for R2 thumbnails since we don't know the actual ratio
-          });
-          return;
-        }
-      } catch (error) {
-        console.log(`⚠️ R2 thumbnail URL failed for ${video.title}, will generate client-side`);
-      }
+    // Priority 2: Try R2 thumbnail URL directly (skip HEAD check to avoid CORS issues)
+    if (video.r2Storage?.thumbnailUrl && !skipR2Thumbnail) {
+      console.log(`🖼️ Using R2 thumbnail URL for ${video.title} (skipping HEAD check due to CORS)`);
+      setState({
+        dataUrl: video.r2Storage.thumbnailUrl,
+        isLoading: false,
+        error: null,
+        aspectRatio: 16/9, // Default aspect ratio for R2 thumbnails since we don't know the actual ratio
+        imageLoadError: false // Track if image actually loads
+      });
+      return;
     }
 
     // Priority 3: Generate thumbnail from video file
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
+    setState(prev => ({ ...prev, isLoading: true, error: null, imageLoadError: false }));
     
     const thumbnailData = await generateThumbnailFromR2(video);
     
@@ -118,14 +123,16 @@ export const useThumbnail = (video: Video) => {
         dataUrl: thumbnailData.dataUrl,
         isLoading: false,
         error: null,
-        aspectRatio: thumbnailData.aspectRatio
+        aspectRatio: thumbnailData.aspectRatio,
+        imageLoadError: false
       });
     } else {
       setState({
         dataUrl: null,
         isLoading: false,
         error: 'Failed to generate thumbnail',
-        aspectRatio: null
+        aspectRatio: null,
+        imageLoadError: false
       });
     }
   }, [video, generateThumbnailFromR2]);

@@ -8,14 +8,14 @@ const SETTINGS_STORAGE_KEY = 'dbtv-playlist-settings';
 const defaultSettings: AppSettings = {
   cloudStorage: {
     r2: {
-      endpoint: '',
-      accessKeyId: '',
-      secretAccessKey: '',
-      bucketName: '',
+      endpoint: 'https://0f4adde46e3682bc198bad82653697c6.r2.cloudflarestorage.com/',
+      accessKeyId: '6e4d88a2c85e6ce790c9b9c9d8fcaa29',
+      secretAccessKey: 'b5094ef878b01a3abfc4ddedfa0fa1ddb84f9434ca024898e3e307f62093d90b',
+      bucketName: 'dbtv-videos-bucket',
       region: 'auto',
       customDomain: 'pub-e191fb2d6e0a4cb691e3258b5d4e85fe.r2.dev'
     },
-    enabled: false
+    enabled: true
   },
   ui: {
     theme: 'light',

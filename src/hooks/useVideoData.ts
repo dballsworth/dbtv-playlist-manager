@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { videoService } from '../services/videoService';
+import { videoService, type NotificationType } from '../services/videoService';
 import type { Video, Playlist } from '../types';
 
 export const useVideoData = () => {
@@ -9,7 +9,55 @@ export const useVideoData = () => {
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
 
-  // Refresh data from service with retry logic
+  // Refresh videos from R2 with retry logic
+  const refreshVideos = useCallback(async (attempt = 1) => {
+    const maxRetries = 3;
+    
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      console.log(`Refreshing videos from R2 (attempt ${attempt})`);
+      
+      const videosData = await videoService.getVideos();
+      
+      setVideos(videosData);
+      setRetryCount(0);
+      
+      console.log(`Successfully loaded ${videosData.length} videos`);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load videos';
+      console.error(`Failed to refresh videos (attempt ${attempt}):`, errorMessage);
+      
+      if (attempt < maxRetries) {
+        // Exponential backoff retry
+        const delay = Math.pow(2, attempt) * 1000;
+        console.log(`Retrying in ${delay}ms...`);
+        
+        setTimeout(() => {
+          setRetryCount(attempt);
+          refreshVideos(attempt + 1);
+        }, delay);
+      } else {
+        setError(errorMessage);
+        setRetryCount(maxRetries);
+      }
+    } finally {
+      if (attempt === 1 || attempt >= maxRetries) {
+        setIsLoading(false);
+      }
+    }
+  }, []);
+
+  // Refresh playlists from local storage (fast operation)
+  const refreshPlaylists = useCallback(() => {
+    console.log('Refreshing playlists from local storage');
+    const playlistsData = videoService.getPlaylists();
+    setPlaylists(playlistsData);
+    console.log(`Successfully loaded ${playlistsData.length} playlists`);
+  }, []);
+
+  // Combined refresh for initial load
   const refreshData = useCallback(async (attempt = 1) => {
     const maxRetries = 3;
     
@@ -17,7 +65,7 @@ export const useVideoData = () => {
       setIsLoading(true);
       setError(null);
       
-      console.log(`Refreshing video data (attempt ${attempt})`);
+      console.log(`Refreshing all data (attempt ${attempt})`);
       
       const [videosData, playlistsData] = await Promise.all([
         videoService.getVideos(),
@@ -55,9 +103,23 @@ export const useVideoData = () => {
 
   // Subscribe to service updates
   useEffect(() => {
-    const unsubscribe = videoService.subscribe(() => {
-      console.log('VideoService notified of changes, refreshing data...');
-      refreshData();
+    const unsubscribe = videoService.subscribe((type: NotificationType) => {
+      console.log(`VideoService notified of ${type} changes...`);
+      
+      switch (type) {
+        case 'videos-changed':
+          console.log('Refreshing videos only (R2 data changed)');
+          refreshVideos();
+          break;
+        case 'playlists-changed':
+          console.log('Refreshing playlists only (local playlist data changed)');
+          refreshPlaylists();
+          break;
+        case 'both-changed':
+          console.log('Refreshing both videos and playlists');
+          refreshData();
+          break;
+      }
     });
 
     // Initial data load
@@ -65,7 +127,7 @@ export const useVideoData = () => {
     refreshData();
 
     return unsubscribe;
-  }, [refreshData]);
+  }, [refreshData, refreshVideos, refreshPlaylists]);
 
   // Force refresh function that clears errors and retries
   const forceRefresh = useCallback(async () => {
@@ -149,9 +211,9 @@ export const useVideoData = () => {
     }
   }, []);
 
-  const addVideoToPlaylist = useCallback(async (playlistId: string, videoId: string) => {
+  const addVideoToPlaylist = useCallback(async (playlistId: string, videoId: string, insertionIndex?: number) => {
     try {
-      const success = await videoService.addVideoToPlaylist(playlistId, videoId);
+      const success = await videoService.addVideoToPlaylist(playlistId, videoId, insertionIndex);
       if (!success) {
         setError('Failed to add video to playlist');
       }
@@ -175,9 +237,9 @@ export const useVideoData = () => {
     }
   }, []);
 
-  const moveVideoToPlaylist = useCallback(async (sourcePlaylistId: string | null, targetPlaylistId: string, videoId: string) => {
+  const moveVideoToPlaylist = useCallback(async (sourcePlaylistId: string | null, targetPlaylistId: string, videoId: string, insertionIndex?: number) => {
     try {
-      const success = await videoService.moveVideoToPlaylist(sourcePlaylistId, targetPlaylistId, videoId);
+      const success = await videoService.moveVideoToPlaylist(sourcePlaylistId, targetPlaylistId, videoId, insertionIndex);
       if (!success) {
         setError('Failed to move video between playlists');
       }
@@ -188,9 +250,9 @@ export const useVideoData = () => {
     }
   }, []);
 
-  const reorderVideosInPlaylist = useCallback((playlistId: string, activeId: string, overId: string) => {
+  const reorderVideosInPlaylist = useCallback((playlistId: string, activeId: string, newIndex: number) => {
     try {
-      const success = videoService.reorderVideosInPlaylist(playlistId, activeId, overId);
+      const success = videoService.reorderVideosInPlaylist(playlistId, activeId, newIndex);
       if (!success) {
         setError('Failed to reorder videos in playlist');
       }

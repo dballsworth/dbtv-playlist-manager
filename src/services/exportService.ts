@@ -50,22 +50,6 @@ export class ExportService {
     };
   }
 
-  /**
-   * Generates mood/category from playlist name
-   */
-  static getMoodFromPlaylistName(playlistName: string): 'ambient' | 'high-energy' | 'psychedelic' {
-    const name = playlistName.toLowerCase();
-    if (name.includes('high') && name.includes('energy')) return 'high-energy';
-    if (name.includes('psychedelic')) return 'psychedelic';
-    return 'ambient'; // default
-  }
-
-  static getCategoryFromPlaylistName(playlistName: string): 'background_visuals' | 'performance_visuals' | 'ambient_visuals' {
-    const name = playlistName.toLowerCase();
-    if (name.includes('performance') || name.includes('energy')) return 'performance_visuals';
-    if (name.includes('psychedelic')) return 'performance_visuals';
-    return 'background_visuals'; // default
-  }
 
   /**
    * Generates DBTV-compatible metadata.json file content
@@ -80,8 +64,8 @@ export class ExportService {
     videos.forEach(video => {
       // Find which playlist(s) contain this video and use the first one's name for metadata
       const containingPlaylist = playlists.find(p => p.videoIds.includes(video.id));
-      const mood = containingPlaylist ? this.getMoodFromPlaylistName(containingPlaylist.name) : 'ambient';
-      const category = containingPlaylist ? this.getCategoryFromPlaylistName(containingPlaylist.name) : 'background_visuals';
+      const mood = containingPlaylist ? containingPlaylist.name : 'ambient';
+      const category = containingPlaylist ? containingPlaylist.name : 'background_visuals';
       
       // Format duration as HH:MM:SS
       const hours = Math.floor(video.duration / 3600);
@@ -146,51 +130,15 @@ export class ExportService {
       };
     }).filter(Boolean) as PlaylistVideoEntry[]; // Remove null entries
 
-    // Use playlist name for mood
-    const playlistMood = this.getMoodFromPlaylistName(cleanPlaylist.name);
-
     return {
       name: cleanPlaylist.name,
       description: cleanPlaylist.name, // Use playlist name as description per user request
-      mood: playlistMood,
+      mood: cleanPlaylist.name, // Use playlist name directly for mood
       loop: true, // Default to true for DBTV compatibility
       videos: playlistVideos
     };
   }
 
-  /**
-   * Generates a default playlist from all selected videos
-   */
-  static generateDefaultPlaylist(
-    videos: Video[]
-  ): PlaylistExport {
-    const playlistVideos: PlaylistVideoEntry[] = videos.map(video => {
-      // Format duration as HH:MM:SS
-      const hours = Math.floor(video.duration / 3600);
-      const minutes = Math.floor((video.duration % 3600) / 60);
-      const seconds = Math.floor(video.duration % 60);
-      const durationFormatted = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-
-      return {
-        filename: video.filename,
-        title: video.title,
-        duration_seconds: Math.floor(video.duration),
-        duration_formatted: durationFormatted,
-        thumbnail: `thumbnails/${video.filename.replace(/\.[^/.]+$/, '.jpg')}`
-      };
-    });
-
-    // Default to ambient for default playlist
-    const defaultMood: 'ambient' | 'high-energy' | 'psychedelic' = 'ambient';
-
-    return {
-      name: 'Default Playlist',
-      description: 'Default Playlist', // Use name as description
-      mood: defaultMood,
-      loop: true,
-      videos: playlistVideos
-    };
-  }
 
   /**
    * Generates the complete export package structure
@@ -235,11 +183,6 @@ export class ExportService {
       const fileName = `${playlist.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')}.json`;
       playlistFiles[fileName] = this.generatePlaylistJson(playlist, playlistVideos);
     });
-    
-    // Always include a default playlist
-    if (!playlistFiles['default.json']) {
-      playlistFiles['default.json'] = this.generateDefaultPlaylist(videos);
-    }
 
     return {
       packageName,
@@ -259,24 +202,24 @@ export class ExportService {
   static validateExportPackage(exportPackage: ReturnType<typeof ExportService.generateExportPackage>): string[] {
     const errors: string[] = [];
     
-    // Check for required default playlist
-    if (!exportPackage.playlists['default.json']) {
-      errors.push('Missing required default.json playlist');
-    }
-    
     // Check metadata completeness
     const { metadata } = exportPackage;
     if (!metadata.video_library.videos || Object.keys(metadata.video_library.videos).length === 0) {
       errors.push('No videos in metadata library');
     }
     
-    // Check all videos have valid moods and categories
+    // Check that there are playlists to export
+    if (!exportPackage.playlists || Object.keys(exportPackage.playlists).length === 0) {
+      errors.push('No playlists to export');
+    }
+    
+    // Check all videos have mood and category values
     Object.entries(metadata.video_library.videos).forEach(([filename, video]) => {
-      if (!['ambient', 'high-energy', 'psychedelic'].includes(video.mood)) {
-        errors.push(`Invalid mood for ${filename}: ${video.mood}`);
+      if (!video.mood || video.mood.trim() === '') {
+        errors.push(`Missing mood for ${filename}`);
       }
-      if (!['background_visuals', 'performance_visuals', 'ambient_visuals'].includes(video.category)) {
-        errors.push(`Invalid category for ${filename}: ${video.category}`);
+      if (!video.category || video.category.trim() === '') {
+        errors.push(`Missing category for ${filename}`);
       }
     });
     

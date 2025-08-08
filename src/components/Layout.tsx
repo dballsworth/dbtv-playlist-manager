@@ -58,7 +58,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     setShowUploadModal(true);
   };
 
-  const handleUploadComplete = (uploads: any[]) => {
+  const handleUploadComplete = (uploads: unknown[]) => {
     console.log('Uploads completed:', uploads);
     // Video data will be automatically refreshed through the service subscription
     setShowUploadModal(false);

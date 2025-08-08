@@ -8,10 +8,12 @@ const STORAGE_KEYS = {
   // R2 videos are fetched directly, but we store metadata overrides
 };
 
+export type NotificationType = 'videos-changed' | 'playlists-changed' | 'both-changed';
+
 export class VideoService {
   private playlists: Playlist[] = [];
   private videoMetadataOverrides: Record<string, Partial<Video>> = {};
-  private listeners: Array<() => void> = [];
+  private listeners: Array<(type: NotificationType) => void> = [];
   private isRefreshing = false;
 
   constructor() {
@@ -19,15 +21,15 @@ export class VideoService {
   }
 
   // Event system for components to listen to data changes
-  subscribe(callback: () => void) {
+  subscribe(callback: (type: NotificationType) => void) {
     this.listeners.push(callback);
     return () => {
       this.listeners = this.listeners.filter(listener => listener !== callback);
     };
   }
 
-  private notify() {
-    this.listeners.forEach(listener => listener());
+  private notify(type: NotificationType = 'both-changed') {
+    this.listeners.forEach(listener => listener(type));
   }
 
   private saveToStorage() {
@@ -145,15 +147,28 @@ export class VideoService {
 
     console.log('🎬 Adding new video to service:', {
       title: newVideo.title,
+      duration: newVideo.duration,
       r2Key: newVideo.r2Storage?.key,
       thumbnailKey: newVideo.r2Storage?.thumbnailKey,
       thumbnailUrl: newVideo.r2Storage?.thumbnailUrl
     });
 
+    // Save video metadata as override so it persists when reloaded from R2
+    if (newVideo.duration > 0 || newVideo.title !== (newVideo.filename.replace(/\.[^/.]+$/, '').replace(/_/g, ' '))) {
+      this.videoMetadataOverrides[newVideo.id] = {
+        title: newVideo.title,
+        duration: newVideo.duration,
+        tags: newVideo.tags,
+        lastModified: newVideo.lastModified
+      };
+      console.log(`💾 Saving metadata override for ${newVideo.title} with duration: ${newVideo.duration}s`);
+      this.saveToStorage();
+    }
+
     // Wait for R2 to be consistent (shorter delay since thumbnail should be uploaded already)
     setTimeout(() => {
       console.log('📺 Notifying listeners of new video upload after delay');
-      this.notify();
+      this.notify('videos-changed');
     }, 1000);
     
     return newVideo;
@@ -181,7 +196,7 @@ export class VideoService {
 
     console.log('Saving video metadata override for:', updatedVideo.title);
     this.saveToStorage();
-    this.notify();
+    this.notify('videos-changed');
     
     return updatedVideo;
   }
@@ -239,7 +254,7 @@ export class VideoService {
     }
     
     this.saveToStorage();
-    this.notify();
+    this.notify('both-changed'); // Video deletion affects both videos and playlists
     
     return {
       success: true,
@@ -277,7 +292,7 @@ export class VideoService {
 
     this.playlists.push(newPlaylist);
     this.saveToStorage();
-    this.notify();
+    this.notify('playlists-changed');
     
     return newPlaylist;
   }
@@ -291,7 +306,7 @@ export class VideoService {
     console.log(`Deleting playlist: ${this.playlists[index].name}`);
     this.playlists.splice(index, 1);
     this.saveToStorage();
-    this.notify();
+    this.notify('playlists-changed');
     
     return true;
   }
@@ -306,12 +321,12 @@ export class VideoService {
     playlist.name = newName;
     playlist.lastModified = new Date();
     this.saveToStorage();
-    this.notify();
+    this.notify('playlists-changed');
     
     return true;
   }
 
-  async addVideoToPlaylist(playlistId: string, videoId: string): Promise<boolean> {
+  async addVideoToPlaylist(playlistId: string, videoId: string, insertionIndex?: number): Promise<boolean> {
     const playlist = this.playlists.find(p => p.id === playlistId);
     
     if (!playlist || playlist.videoIds.includes(videoId)) {
@@ -331,13 +346,20 @@ export class VideoService {
       return false;
     }
 
-    playlist.videoIds.push(videoId);
-    playlist.videoOrder.push(videoId);
+    // Insert at specific index or append to end
+    if (insertionIndex !== undefined && insertionIndex >= 0 && insertionIndex <= playlist.videoIds.length) {
+      playlist.videoIds.splice(insertionIndex, 0, videoId);
+      playlist.videoOrder.splice(insertionIndex, 0, videoId);
+    } else {
+      // Default behavior: append to end
+      playlist.videoIds.push(videoId);
+      playlist.videoOrder.push(videoId);
+    }
     playlist.lastModified = new Date();
     playlist.metadata = await this.calculatePlaylistMetadata(playlist.videoIds);
 
     this.saveToStorage();
-    this.notify();
+    this.notify('playlists-changed');
     
     return true;
   }
@@ -354,12 +376,12 @@ export class VideoService {
     playlist.metadata = await this.calculatePlaylistMetadata(playlist.videoIds);
 
     this.saveToStorage();
-    this.notify();
+    this.notify('playlists-changed');
     
     return true;
   }
 
-  async moveVideoToPlaylist(sourcePlaylistId: string | null, targetPlaylistId: string, videoId: string): Promise<boolean> {
+  async moveVideoToPlaylist(sourcePlaylistId: string | null, targetPlaylistId: string, videoId: string, insertionIndex?: number): Promise<boolean> {
     const targetPlaylist = this.playlists.find(p => p.id === targetPlaylistId);
     
     if (!targetPlaylist) return false;
@@ -382,28 +404,36 @@ export class VideoService {
       await this.removeVideoFromPlaylist(sourcePlaylistId, videoId);
     }
 
-    // Add to target playlist
-    return await this.addVideoToPlaylist(targetPlaylistId, videoId);
+    // Add to target playlist at specified insertion index
+    return await this.addVideoToPlaylist(targetPlaylistId, videoId, insertionIndex);
   }
 
-  reorderVideosInPlaylist(playlistId: string, activeId: string, overId: string): boolean {
+  reorderVideosInPlaylist(playlistId: string, activeId: string, newIndex: number): boolean {
     const playlist = this.playlists.find(p => p.id === playlistId);
     if (!playlist) return false;
 
     const oldIndex = playlist.videoOrder.indexOf(activeId);
-    const newIndex = playlist.videoOrder.indexOf(overId);
-    
-    if (oldIndex === -1 || newIndex === -1) return false;
+    if (oldIndex === -1) return false;
+
+    // Ensure newIndex is within bounds
+    const maxIndex = playlist.videoOrder.length - 1;
+    const clampedNewIndex = Math.max(0, Math.min(newIndex, maxIndex));
+
+    console.log(`🔄 Reordering video ${activeId} from index ${oldIndex} to ${clampedNewIndex}`);
 
     const newOrder = [...playlist.videoOrder];
+    // Remove from old position
     newOrder.splice(oldIndex, 1);
-    newOrder.splice(newIndex, 0, activeId);
+    // Insert at new position
+    newOrder.splice(clampedNewIndex, 0, activeId);
     
     playlist.videoOrder = newOrder;
     playlist.lastModified = new Date();
 
+    console.log(`📋 New playlist order:`, newOrder);
+
     this.saveToStorage();
-    this.notify();
+    this.notify('playlists-changed');
     
     return true;
   }
@@ -433,7 +463,7 @@ export class VideoService {
     // Since getVideos() now always fetches from R2, sync is just a refresh
     try {
       await this.getVideos();
-      this.notify(); // Notify listeners of updated data
+      this.notify('videos-changed'); // Notify listeners of updated video data
       return { success: true };
     } catch (error) {
       console.error('Failed to sync with R2:', error);
@@ -490,7 +520,7 @@ export class VideoService {
         id: videoId,
         title,
         filename,
-        duration: 0, // TODO: Extract from video metadata
+        duration: 0, // Will be replaced if metadata override contains duration
         fileSize: r2Object.size,
         thumbnailUrl: thumbnailUrl || '',
         tags: [],
@@ -533,8 +563,11 @@ export class VideoService {
     file: File;
     r2Key?: string;
     thumbnailR2Key?: string;
+    videoDuration?: number;
   }): Promise<Video | null> {
     if (!uploadResult.r2Key) return null;
+
+    console.log(`🎬 [VideoService] createVideoFromUpload received duration: ${uploadResult.videoDuration}s (type: ${typeof uploadResult.videoDuration}) for ${uploadResult.file.name}`);
 
     const r2Storage: R2StorageInfo = {
       key: uploadResult.r2Key,
@@ -547,10 +580,13 @@ export class VideoService {
     // Extract basic video metadata
     const title = uploadResult.file.name.replace(/\.[^/.]+$/, '').replace(/_/g, ' ');
     
+    const finalDuration = uploadResult.videoDuration || 0;
+    console.log(`🎯 [VideoService] Using final duration: ${finalDuration}s for video creation`);
+    
     return await this.addVideo({
       title,
       filename: uploadResult.file.name,
-      duration: 0, // TODO: Extract duration from video file
+      duration: finalDuration, // Use extracted duration or fall back to 0
       fileSize: uploadResult.file.size,
       tags: [],
       metadata: {
@@ -622,7 +658,7 @@ export class VideoService {
       // TODO: In a full implementation, this would update metadata in R2
       // For now, just notify listeners since R2 is source of truth
       console.warn(`Video ${videoId} marked as orphaned in R2 storage`);
-      this.notify();
+      this.notify('videos-changed');
       
       return true;
     } catch (error) {
@@ -636,7 +672,7 @@ export class VideoService {
     console.log('Clearing all playlist data...');
     this.playlists = [];
     this.saveToStorage();
-    this.notify();
+    this.notify('playlists-changed');
     console.log('All playlists cleared. Users can now recreate playlists with current video IDs.');
   }
 
@@ -700,7 +736,7 @@ export class VideoService {
     if (hasChanges) {
       this.playlists = playlistsToKeep;
       this.saveToStorage();
-      this.notify();
+      this.notify('playlists-changed');
       console.log(`✅ Playlist cleanup completed: cleaned ${totalCleaned} playlists, removed ${totalRemoved} empty playlists`);
     } else {
       console.log(`✅ Playlist cleanup completed: no changes needed`);

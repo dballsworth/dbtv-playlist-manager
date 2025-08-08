@@ -157,7 +157,8 @@ export const RepositoryColumn: React.FC<RepositoryColumnProps> = ({ videos, onEd
         } else {
           failedCount++;
         }
-      } catch (error) {
+      } catch (err) {
+        console.error('Error deleting video:', err);
         failedCount++;
       }
     }

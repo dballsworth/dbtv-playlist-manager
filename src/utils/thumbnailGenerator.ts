@@ -6,6 +6,7 @@ export interface ThumbnailResult {
   width: number;
   height: number;
   aspectRatio: number; // width / height ratio for proper UI display
+  videoDuration?: number; // duration in seconds extracted from video metadata
 }
 
 export interface ThumbnailOptions {
@@ -51,17 +52,54 @@ export class ThumbnailGenerator {
           video.remove();
         };
         
-        video.onloadedmetadata = () => {
-          console.log(`Video loaded: ${video.videoWidth}x${video.videoHeight}, duration: ${video.duration}s`);
+        let validDuration: number | undefined = undefined;
+        
+        const checkAndCaptureDuration = (eventName: string) => {
+          console.log(`🔍 [ThumbnailGenerator] ${eventName} event for ${videoFile.name}:`);
+          console.log(`   - Duration: ${video.duration} (type: ${typeof video.duration})`);
+          console.log(`   - ReadyState: ${video.readyState}`);
           
-          // Set time to capture (but don't exceed video duration)
-          const captureTime = Math.min(opts.timeOffset, video.duration - 0.1);
-          video.currentTime = captureTime;
+          if (!isNaN(video.duration) && video.duration > 0 && video.duration !== Infinity) {
+            validDuration = video.duration;
+            console.log(`✅ [ThumbnailGenerator] Valid duration captured from ${eventName}: ${validDuration}s`);
+          } else {
+            console.warn(`⚠️ [ThumbnailGenerator] Invalid duration in ${eventName}: ${video.duration}`);
+          }
+        };
+        
+        video.onloadedmetadata = () => {
+          console.log(`🎬 [ThumbnailGenerator] Video metadata loaded for ${videoFile.name}:`);
+          console.log(`   - Dimensions: ${video.videoWidth}x${video.videoHeight}`);
+          checkAndCaptureDuration('onloadedmetadata');
+          
+          // Wait a bit for duration to stabilize, then proceed
+          setTimeout(() => {
+            checkAndCaptureDuration('onloadedmetadata-delayed');
+            
+            // Set time to capture (but don't exceed video duration)
+            const safeDuration = validDuration || video.duration || 2; // fallback to 2 seconds
+            const captureTime = Math.min(opts.timeOffset, safeDuration - 0.1);
+            console.log(`📍 [ThumbnailGenerator] Setting currentTime to ${captureTime}s`);
+            video.currentTime = captureTime;
+          }, 100); // Small delay to let duration stabilize
+        };
+        
+        video.oncanplay = () => {
+          checkAndCaptureDuration('oncanplay');
+        };
+        
+        video.onloadeddata = () => {
+          checkAndCaptureDuration('onloadeddata');
         };
         
         video.onseeked = () => {
           try {
-            console.log(`Capturing thumbnail at ${video.currentTime}s`);
+            console.log(`📸 [ThumbnailGenerator] Video seeked to ${video.currentTime}s for ${videoFile.name}`);
+            console.log(`⏱️ [ThumbnailGenerator] Final duration check: ${video.duration}s (type: ${typeof video.duration})`);
+            console.log(`🎯 [ThumbnailGenerator] Using captured valid duration: ${validDuration}s`);
+            
+            // Use the best available duration value
+            const finalDuration = validDuration || video.duration;
             
             // Calculate thumbnail dimensions maintaining aspect ratio
             const aspectRatio = video.videoHeight / video.videoWidth;
@@ -79,7 +117,8 @@ export class ThumbnailGenerator {
                 error: 'Could not get canvas context',
                 width: 0,
                 height: 0,
-                aspectRatio: 1
+                aspectRatio: 1,
+                videoDuration: finalDuration
               });
               return;
             }
@@ -103,21 +142,25 @@ export class ThumbnailGenerator {
                 cleanup();
                 
                 if (blob) {
+                  console.log(`✅ [ThumbnailGenerator] Success! Returning duration: ${finalDuration}s for ${videoFile.name}`);
                   resolve({
                     success: true,
                     dataUrl,
                     blob,
                     width: thumbnailWidth,
                     height: thumbnailHeight,
-                    aspectRatio: thumbnailWidth / thumbnailHeight
+                    aspectRatio: thumbnailWidth / thumbnailHeight,
+                    videoDuration: finalDuration
                   });
                 } else {
+                  console.log(`❌ [ThumbnailGenerator] Blob failed but returning duration: ${finalDuration}s for ${videoFile.name}`);
                   resolve({
                     success: false,
                     error: 'Failed to create thumbnail blob',
                     width: thumbnailWidth,
                     height: thumbnailHeight,
-                    aspectRatio: thumbnailWidth / thumbnailHeight
+                    aspectRatio: thumbnailWidth / thumbnailHeight,
+                    videoDuration: finalDuration
                   });
                 }
               },
@@ -132,30 +175,37 @@ export class ThumbnailGenerator {
               error: error instanceof Error ? error.message : 'Failed to generate thumbnail',
               width: 0,
               height: 0,
-              aspectRatio: 1
+              aspectRatio: 1,
+              videoDuration: validDuration || video.duration
             });
           }
         };
         
         video.onerror = (error) => {
+          console.error(`❌ [ThumbnailGenerator] Video load error for ${videoFile.name}:`, error);
+          console.log(`🔍 [ThumbnailGenerator] Final duration attempt in onerror: ${validDuration || video.duration}`);
           cleanup();
           resolve({
             success: false,
             error: `Video load error: ${error}`,
             width: 0,
             height: 0,
-            aspectRatio: 1
+            aspectRatio: 1,
+            videoDuration: validDuration // Try to preserve any captured duration
           });
         };
         
         video.onabort = () => {
+          console.warn(`⚠️ [ThumbnailGenerator] Video load aborted for ${videoFile.name}`);
+          console.log(`🔍 [ThumbnailGenerator] Final duration attempt in onabort: ${validDuration || video.duration}`);
           cleanup();
           resolve({
             success: false,
             error: 'Video load aborted',
             width: 0,
             height: 0,
-            aspectRatio: 1
+            aspectRatio: 1,
+            videoDuration: validDuration // Try to preserve any captured duration
           });
         };
         
@@ -170,7 +220,8 @@ export class ThumbnailGenerator {
         error: error instanceof Error ? error.message : 'Unknown error',
         width: 0,
         height: 0,
-        aspectRatio: 1
+        aspectRatio: 1,
+        videoDuration: undefined // Error occurred before video could be loaded
       };
     }
   }

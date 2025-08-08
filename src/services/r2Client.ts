@@ -276,8 +276,9 @@ export class R2Client {
 
       await this.s3Client.send(command);
       return true;
-    } catch (error) {
+    } catch (err) {
       // HeadObject throws an error if object doesn't exist
+      console.debug('Object does not exist:', err);
       return false;
     }
   }

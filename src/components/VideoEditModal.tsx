@@ -103,7 +103,8 @@ export const VideoEditModal: React.FC<VideoEditModalProps> = ({
       }
       
       onClose();
-    } catch (error) {
+    } catch (err) {
+      console.error('Error saving video:', err);
       setErrors(['Failed to save video metadata']);
     } finally {
       setIsLoading(false);
