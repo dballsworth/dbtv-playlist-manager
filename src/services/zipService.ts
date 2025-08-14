@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import type { Video, Playlist } from '../types';
 import { ExportService } from './exportService';
 import { r2Client } from './r2Client';
+import { PackageMetadataService } from './packageMetadataService';
 
 export class ZipService {
   
@@ -260,11 +261,29 @@ export class ZipService {
         }
       });
 
-      onProgress?.({ completed: 100, total: 100, currentFile: 'Package saved to R2!' });
-
       if (!uploadResult.success) {
         throw new Error(uploadResult.error || 'Failed to upload to R2');
       }
+
+      // Save metadata as separate file for fast access
+      onProgress?.({ completed: 90, total: 100, currentFile: 'Saving metadata...' });
+      
+      const filename = r2Key.split('/').pop() || r2Key;
+      const metadata = PackageMetadataService.generateMetadata(
+        packageName,
+        filename,
+        playlists,
+        videos,
+        zipBlob.size
+      );
+      
+      const metadataResult = await PackageMetadataService.saveMetadata(r2Key, metadata);
+      if (!metadataResult.success) {
+        console.warn('Failed to save metadata file:', metadataResult.error);
+        // Don't fail the whole operation if metadata save fails
+      }
+
+      onProgress?.({ completed: 100, total: 100, currentFile: 'Package saved to R2!' });
 
       console.log(`🎉 Package successfully saved to R2: ${r2Key}`);
       return {

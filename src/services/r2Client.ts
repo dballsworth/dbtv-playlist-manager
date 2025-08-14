@@ -172,7 +172,16 @@ export class R2Client {
     }
 
     try {
-      const body = file instanceof File ? await file.arrayBuffer() : file;
+      let body: Uint8Array;
+      if (file instanceof File) {
+        const arrayBuffer = await file.arrayBuffer();
+        body = new Uint8Array(arrayBuffer);
+      } else if (file instanceof ArrayBuffer) {
+        body = new Uint8Array(file);
+      } else {
+        body = file;
+      }
+      
       const contentType = options?.contentType || 
                          (file instanceof File ? file.type : 'application/octet-stream');
 
@@ -380,13 +389,14 @@ export class R2Client {
     try {
       console.log(`📦 Uploading blob to R2: ${key} (${blob.size} bytes)`);
       
-      // Convert blob to ArrayBuffer for S3 upload
+      // Convert blob to Uint8Array for S3 upload
       const arrayBuffer = await blob.arrayBuffer();
+      const body = new Uint8Array(arrayBuffer);
       
       const command = new PutObjectCommand({
         Bucket: this.config.bucketName,
         Key: key,
-        Body: arrayBuffer,
+        Body: body,
         ContentType: options?.contentType || blob.type || 'application/octet-stream',
         Metadata: options?.metadata,
       });

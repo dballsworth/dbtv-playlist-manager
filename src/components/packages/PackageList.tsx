@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { PackageLoaderService, type SavedPackage } from '../../services/packageLoaderService';
 import { r2Client } from '../../services/r2Client';
-import { Package, Calendar, HardDrive, Copy, ExternalLink, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Package, Calendar, HardDrive, Copy, ExternalLink, RefreshCw, AlertTriangle, Trash2, FileText, Video } from 'lucide-react';
 
 export const PackageList: React.FC = () => {
   const [packages, setPackages] = useState<SavedPackage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [deletingPackage, setDeletingPackage] = useState<string | null>(null);
 
   useEffect(() => {
     loadPackages();
@@ -73,6 +74,32 @@ export const PackageList: React.FC = () => {
       }
     } catch (err) {
       console.error('Download error:', err);
+    }
+  };
+
+  const handleDeletePackage = async (pkg: SavedPackage) => {
+    if (!window.confirm(`Are you sure you want to delete "${pkg.packageName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingPackage(pkg.r2Key);
+    try {
+      console.log(`🗑️ Deleting package: ${pkg.packageName}`);
+      const result = await PackageLoaderService.deletePackage(pkg.r2Key);
+      
+      if (result.success) {
+        console.log(`✅ Package deleted: ${pkg.filename}`);
+        // Reload the package list
+        await loadPackages();
+      } else {
+        console.error(`Delete failed: ${result.error}`);
+        alert(`Failed to delete package: ${result.error}`);
+      }
+    } catch (err) {
+      console.error('Delete error:', err);
+      alert('An error occurred while deleting the package');
+    } finally {
+      setDeletingPackage(null);
     }
   };
 
@@ -154,7 +181,33 @@ export const PackageList: React.FC = () => {
                     <HardDrive size={14} />
                     <span>{PackageLoaderService.formatFileSize(pkg.size)}</span>
                   </div>
+                  {pkg.playlistCount !== undefined && (
+                    <div className="metadata-row">
+                      <FileText size={14} />
+                      <span>{pkg.playlistCount} playlist{pkg.playlistCount !== 1 ? 's' : ''}</span>
+                    </div>
+                  )}
+                  {pkg.videoCount !== undefined && (
+                    <div className="metadata-row">
+                      <Video size={14} />
+                      <span>{pkg.videoCount} video{pkg.videoCount !== 1 ? 's' : ''}</span>
+                    </div>
+                  )}
                 </div>
+
+                {pkg.playlistNames && pkg.playlistNames.length > 0 && (
+                  <div className="package-playlists">
+                    <span className="playlists-label">Playlists:</span>
+                    <div className="playlists-list">
+                      {pkg.playlistNames.slice(0, 3).map((name, idx) => (
+                        <span key={idx} className="playlist-name">{name}</span>
+                      ))}
+                      {pkg.playlistNames.length > 3 && (
+                        <span className="playlist-more">+{pkg.playlistNames.length - 3} more</span>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className="package-filename">
                   <span className="filename-label">File:</span>
@@ -214,6 +267,15 @@ export const PackageList: React.FC = () => {
                 >
                   <Package size={16} />
                   <span>Download</span>
+                </button>
+                <button
+                  className="btn btn-danger"
+                  onClick={() => handleDeletePackage(pkg)}
+                  disabled={deletingPackage === pkg.r2Key}
+                  title="Delete package"
+                >
+                  <Trash2 size={16} />
+                  <span>{deletingPackage === pkg.r2Key ? 'Deleting...' : 'Delete'}</span>
                 </button>
               </div>
             </div>

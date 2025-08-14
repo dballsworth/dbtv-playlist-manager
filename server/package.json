@@ -1,0 +1,20 @@
+{
+  "name": "dbtv-playlist-manager-api",
+  "version": "1.0.0",
+  "description": "API server for DBTV Playlist Manager",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test-r2": "node test-r2.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.859.0",
+    "@aws-sdk/node-http-handler": "^3.370.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "jszip": "^3.10.1"
+  }
+}

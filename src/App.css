@@ -1045,6 +1045,15 @@ body.drag-in-progress * {
   background: #7f8c8d;
 }
 
+.btn-danger {
+  background: #e74c3c;
+  color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #c0392b;
+}
+
 /* Status Details */
 .status-details {
   margin-top: 15px;
@@ -2588,7 +2597,8 @@ body.drag-in-progress * {
 /* Packages View Layout */
 .packages-view {
   padding: 20px;
-  height: 100%;
+  height: calc(100vh - 80px); /* Account for header height */
+  overflow: hidden;
 }
 
 .packages-layout {
@@ -2605,6 +2615,8 @@ body.drag-in-progress * {
 .package-list-panel {
   border-left: 1px solid #e2e8f0;
   padding-left: 30px;
+  height: 100%;
+  overflow: hidden;
 }
 
 /* Package List Component */
@@ -2697,6 +2709,27 @@ body.drag-in-progress * {
   gap: 16px;
   overflow-y: auto;
   flex: 1;
+  min-height: 0; /* Important for flexbox scrolling */
+  padding-right: 8px; /* Space for scrollbar */
+}
+
+/* Custom scrollbar styling for packages grid */
+.packages-grid::-webkit-scrollbar {
+  width: 8px;
+}
+
+.packages-grid::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+.packages-grid::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.packages-grid::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 .package-card {
@@ -2749,6 +2782,43 @@ body.drag-in-progress * {
   flex-direction: column;
   gap: 4px;
   font-size: 13px;
+}
+
+.package-playlists {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.playlists-label {
+  display: block;
+  font-size: 12px;
+  color: #718096;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.playlists-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.playlist-name {
+  padding: 2px 8px;
+  background: #edf2f7;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #4a5568;
+}
+
+.playlist-more {
+  padding: 2px 8px;
+  background: #f7fafc;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #718096;
+  font-style: italic;
 }
 
 .filename-label {

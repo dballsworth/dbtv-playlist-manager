@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { r2Client } from './r2Client';
+import { PackageMetadataService } from './packageMetadataService';
 import type { Playlist, Video, PlaylistExport } from '../types';
 
 export interface SavedPackage {
@@ -13,6 +14,10 @@ export interface SavedPackage {
     playlistCount: string;
     createdAt: string;
   };
+  // Additional attributes for display
+  playlistCount?: number;
+  videoCount?: number;
+  playlistNames?: string[];
 }
 
 export interface LoadedPackageStructure {
@@ -43,27 +48,54 @@ export class PackageLoaderService {
       console.log('📦 Listing saved packages from R2...');
       const result = await r2Client.listObjects('playlists/', 100);
       
-      const packages: SavedPackage[] = result.objects
-        .filter(obj => obj.key.endsWith('.zip'))
-        .map(obj => {
-          // Extract package name from filename
-          const filename = obj.key.split('/').pop() || obj.key;
-          const packageName = filename
-            .replace(/-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-dbtv-package\.zip$/, '') // Remove timestamp
-            .replace(/[_-]/g, ' ')
-            .replace(/\b\w/g, l => l.toUpperCase()); // Title case
-          
-          return {
-            r2Key: obj.key,
-            filename,
-            packageName,
-            size: obj.size,
-            lastModified: obj.lastModified,
-            // Metadata would be stored as object metadata during upload
-            metadata: undefined // TODO: Extract from R2 object metadata if available
-          };
-        })
-        .sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime()); // Most recent first
+      const packages: SavedPackage[] = [];
+      
+      // Process each package and extract metadata
+      for (const obj of result.objects.filter(obj => obj.key.endsWith('.zip'))) {
+        // Extract package name from filename
+        const filename = obj.key.split('/').pop() || obj.key;
+        const packageName = filename
+          .replace(/-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-dbtv-package\.zip$/, '') // Remove timestamp
+          .replace(/[_-]/g, ' ')
+          .replace(/\b\w/g, l => l.toUpperCase()); // Title case
+        
+        const savedPackage: SavedPackage = {
+          r2Key: obj.key,
+          filename,
+          packageName,
+          size: obj.size,
+          lastModified: obj.lastModified,
+          metadata: undefined
+        };
+        
+        // Try to fetch metadata file first (fast)
+        const metadata = await PackageMetadataService.fetchMetadata(obj.key);
+        if (metadata) {
+          savedPackage.playlistCount = metadata.playlistCount;
+          savedPackage.videoCount = metadata.videoCount;
+          savedPackage.playlistNames = metadata.playlistNames;
+          console.log(`✅ Loaded metadata from file for ${filename}`);
+        } else {
+          // Fallback: Try to generate metadata from ZIP (slower, but works for old packages)
+          console.log(`⚠️ No metadata file for ${filename}, attempting to generate...`);
+          try {
+            const generateResult = await PackageMetadataService.generateMetadataForExistingPackage(obj.key);
+            if (generateResult.success && generateResult.metadata) {
+              savedPackage.playlistCount = generateResult.metadata.playlistCount;
+              savedPackage.videoCount = generateResult.metadata.videoCount;
+              savedPackage.playlistNames = generateResult.metadata.playlistNames;
+              console.log(`✅ Generated and saved metadata for ${filename}`);
+            }
+          } catch (err) {
+            console.warn(`Could not generate metadata for ${obj.key}:`, err);
+          }
+        }
+        
+        packages.push(savedPackage);
+      }
+      
+      // Sort by most recent first
+      packages.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
 
       console.log(`✅ Found ${packages.length} saved packages`);
       return { packages };
@@ -313,5 +345,41 @@ export class PackageLoaderService {
       hour: '2-digit', 
       minute: '2-digit' 
     });
+  }
+
+  /**
+   * Delete a package from R2 storage
+   */
+  static async deletePackage(r2Key: string): Promise<{ success: boolean; error?: string }> {
+    if (!r2Client.isConfigured()) {
+      return { success: false, error: 'R2 client not configured' };
+    }
+
+    try {
+      console.log(`🗑️ Deleting package: ${r2Key}`);
+      
+      // Delete the package file
+      const result = await r2Client.deleteObject(r2Key);
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Delete failed');
+      }
+      
+      // Also delete the metadata file if it exists
+      const metadataResult = await PackageMetadataService.deleteMetadata(r2Key);
+      if (!metadataResult.success) {
+        console.warn(`Failed to delete metadata file: ${metadataResult.error}`);
+        // Don't fail the operation if metadata deletion fails
+      }
+      
+      console.log(`✅ Package and metadata deleted successfully: ${r2Key}`);
+      return { success: true };
+    } catch (error) {
+      console.error(`❌ Failed to delete package ${r2Key}:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Delete failed'
+      };
+    }
   }
 }

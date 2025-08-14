@@ -24,6 +24,16 @@ A desktop web application for managing video content for the Dickens & Ballswort
 - Real-time package size calculation
 - Live folder structure preview
 - Export functionality for DBTV-compatible packages
+- **Delete packages** with confirmation
+- **Fast package listing** with optimized metadata system (100-1000x faster)
+- Display package attributes (playlist count, video count, playlist names)
+
+### 🚀 API Server for External Access
+- RESTful API for querying and downloading packages
+- Designed for consumption by dbtv-remote and dbtv-system
+- Search and filter packages by various criteria
+- CORS support for cross-origin requests
+- Comprehensive API documentation
 
 ### 🎛️ DBTV System Integration
 - Compatible with existing DBTV Raspberry Pi deployment

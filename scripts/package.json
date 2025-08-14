@@ -1,0 +1,14 @@
+{
+  "name": "dbtv-scripts",
+  "version": "1.0.0",
+  "description": "Utility scripts for DBTV Playlist Manager",
+  "type": "module",
+  "scripts": {
+    "generate-metadata": "node generate-metadata.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.859.0",
+    "dotenv": "^17.2.1",
+    "jszip": "^3.10.1"
+  }
+}
