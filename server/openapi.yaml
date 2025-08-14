@@ -1,0 +1,408 @@
+openapi: 3.0.3
+info:
+  title: DBTV Playlist Manager API
+  description: |
+    REST API for querying and downloading DBTV playlist packages stored in Cloudflare R2.
+    This API is designed to be consumed by dbtv-remote and dbtv-system applications.
+    
+    ## Features
+    - List all available packages with metadata
+    - Get detailed package information
+    - Download package ZIP files
+    - Search and filter packages with various criteria
+    - CORS support for cross-origin requests
+    
+    ## Package Structure
+    Each package is a ZIP file containing:
+    - `content/playlists/` - JSON files with playlist definitions
+    - `content/videos/` - Video files referenced by playlists
+    - `*.meta.json` - Package metadata (optional, for faster loading)
+  version: 1.0.0
+  contact:
+    name: DBTV Playlist Manager
+  license:
+    name: MIT
+servers:
+  - url: http://localhost:3001/api
+    description: Local development server
+  - url: https://your-production-domain.com/api
+    description: Production server
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: Check if the API server is running and responsive
+      operationId: healthCheck
+      tags:
+        - System
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "healthy"
+                timestamp: "2024-01-15T10:30:00.000Z"
+
+  /packages:
+    get:
+      summary: List All Packages
+      description: |
+        Retrieve a list of all available packages with optional metadata.
+        Use `includeMetadata=true` for complete package information (slower response).
+      operationId: listPackages
+      tags:
+        - Packages
+      parameters:
+        - name: includeMetadata
+          in: query
+          description: Include playlist and video counts (slower response)
+          required: false
+          schema:
+            type: boolean
+            default: false
+          example: true
+      responses:
+        '200':
+          description: List of packages retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PackageListResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /packages/{id}:
+    get:
+      summary: Get Package Details
+      description: Get detailed information about a specific package by its ID
+      operationId: getPackageDetails
+      tags:
+        - Packages
+      parameters:
+        - name: id
+          in: path
+          description: Package ID (R2 key, URL encoded)
+          required: true
+          schema:
+            type: string
+          example: "playlists%2Ftraining-package-2024-01-15T10-30-00-dbtv-package.zip"
+      responses:
+        '200':
+          description: Package details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PackageDetailsResponse'
+        '404':
+          description: Package not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Package not found"
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /packages/{id}/download:
+    get:
+      summary: Download Package
+      description: Download a package ZIP file
+      operationId: downloadPackage
+      tags:
+        - Packages
+      parameters:
+        - name: id
+          in: path
+          description: Package ID (R2 key, URL encoded)
+          required: true
+          schema:
+            type: string
+          example: "playlists%2Ftraining-package-2024-01-15T10-30-00-dbtv-package.zip"
+      responses:
+        '200':
+          description: Package ZIP file
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              description: Attachment filename
+              schema:
+                type: string
+                example: 'attachment; filename="training-package-2024-01-15T10-30-00-dbtv-package.zip"'
+            Content-Length:
+              description: File size in bytes
+              schema:
+                type: integer
+                example: 1048576
+        '404':
+          description: Package not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /packages/search:
+    get:
+      summary: Search Packages
+      description: |
+        Search and filter packages based on various criteria.
+        All filters are applied as AND conditions.
+      operationId: searchPackages
+      tags:
+        - Packages
+      parameters:
+        - name: query
+          in: query
+          description: Search term to match against package names and playlist names
+          required: false
+          schema:
+            type: string
+          example: "training"
+        - name: minPlaylists
+          in: query
+          description: Minimum number of playlists in package
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          example: 5
+        - name: maxPlaylists
+          in: query
+          description: Maximum number of playlists in package
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          example: 20
+        - name: minVideos
+          in: query
+          description: Minimum number of videos in package
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          example: 10
+        - name: maxVideos
+          in: query
+          description: Maximum number of videos in package
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          example: 100
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PackageListResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum: [healthy]
+          description: Server health status
+        timestamp:
+          type: string
+          format: date-time
+          description: Current server timestamp
+
+    Package:
+      type: object
+      required:
+        - id
+        - filename
+        - packageName
+        - size
+        - lastModified
+        - downloadUrl
+      properties:
+        id:
+          type: string
+          description: Unique package identifier (R2 key)
+          example: "playlists/training-package-2024-01-15T10-30-00-dbtv-package.zip"
+        filename:
+          type: string
+          description: Original filename
+          example: "training-package-2024-01-15T10-30-00-dbtv-package.zip"
+        packageName:
+          type: string
+          description: Human-readable package name
+          example: "Training Package"
+        size:
+          type: integer
+          description: Package size in bytes
+          example: 1048576
+        lastModified:
+          type: string
+          format: date-time
+          description: Last modification date
+          example: "2024-01-15T10:30:00.000Z"
+        downloadUrl:
+          type: string
+          description: Relative URL for downloading the package
+          example: "/api/packages/playlists%2Ftraining-package-2024-01-15T10-30-00-dbtv-package.zip/download"
+        playlistCount:
+          type: integer
+          description: Number of playlists in the package (optional)
+          example: 5
+        playlistNames:
+          type: array
+          items:
+            type: string
+          description: List of playlist names (optional)
+          example: ["Basic Training", "Advanced Techniques", "Safety Protocols"]
+        videoCount:
+          type: integer
+          description: Total number of unique videos in the package (optional)
+          example: 25
+
+    PackageListResponse:
+      type: object
+      required:
+        - success
+        - packages
+        - total
+      properties:
+        success:
+          type: boolean
+          description: Request success status
+          example: true
+        packages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Package'
+          description: List of packages
+        total:
+          type: integer
+          description: Total number of packages
+          example: 10
+
+    PackageDetailsResponse:
+      type: object
+      required:
+        - success
+        - package
+      properties:
+        success:
+          type: boolean
+          description: Request success status
+          example: true
+        package:
+          $ref: '#/components/schemas/Package'
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          description: Request success status (always false for errors)
+          example: false
+        error:
+          type: string
+          description: Error message
+          example: "Package not found"
+        message:
+          type: string
+          description: Detailed error message (optional)
+          example: "The requested package ID does not exist in the storage bucket"
+
+    PlaylistDefinition:
+      type: object
+      description: Structure of playlist JSON files within packages
+      required:
+        - name
+        - videos
+      properties:
+        name:
+          type: string
+          description: Playlist name
+          example: "Basic Training"
+        description:
+          type: string
+          description: Playlist description
+          example: "Fundamental training videos for new employees"
+        videos:
+          type: array
+          items:
+            $ref: '#/components/schemas/VideoReference'
+          description: List of videos in the playlist
+
+    VideoReference:
+      type: object
+      description: Video reference within a playlist
+      required:
+        - filename
+        - title
+      properties:
+        filename:
+          type: string
+          description: Video filename within the package
+          example: "intro-video.mp4"
+        title:
+          type: string
+          description: Video title
+          example: "Introduction to Safety Protocols"
+        description:
+          type: string
+          description: Video description
+          example: "Overview of basic safety procedures"
+        duration:
+          type: integer
+          description: Video duration in seconds
+          example: 120
+        tags:
+          type: array
+          items:
+            type: string
+          description: Video tags for categorization
+          example: ["safety", "introduction", "basics"]
+
+tags:
+  - name: System
+    description: System health and status endpoints
+  - name: Packages
+    description: Package management and download endpoints
+
+externalDocs:
+  description: Full API Documentation
+  url: ./API_DOCUMENTATION.md
