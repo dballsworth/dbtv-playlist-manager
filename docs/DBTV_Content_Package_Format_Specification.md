@@ -34,7 +34,6 @@ The DBTV system provides synchronized visual content across multiple displays du
 content/
 ├── packages/           # Video assets and metadata
 ├── playlists/         # Playlist definitions
-└── examples/          # Sample content for testing
 ```
 
 #### 1.2 Package Assets Directory
@@ -54,18 +53,11 @@ packages/
 #### 2.1 Video File Format
 - **Format**: MP4 container
 - **Resolution**: 1920x1080 (Full HD)
-- **Naming Convention**: `{mood}_{sequence}.mp4`
   - Examples: `ambient_01.mp4`, `energy_03.mp4`, `psychedelic_02.mp4`
 
-#### 2.2 Supported Moods
-- `ambient`: Calm, background visuals for startup and breaks
-- `high-energy`: Fast-paced visuals for energetic performances  
-- `psychedelic`: Mind-bending visuals for intense performances
 
 #### 2.3 Content Categories
-- `background_visuals`: Suitable for ambient/break periods
-- `performance_visuals`: Designed for live performance sync
-- `ambient_visuals`: Atmospheric content for mood setting
+- there can be 1 or more playlists; playlists are the esseentail container for content
 
 ### 3. Thumbnail Requirements
 
