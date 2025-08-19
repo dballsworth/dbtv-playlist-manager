@@ -227,6 +227,11 @@
   font-size: 13px;
 }
 
+.playlist-card {
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
 .card-thumbnail {
   width: 100%;
   min-height: 80px; /* Minimum height for fallback cases */

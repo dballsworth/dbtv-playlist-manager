@@ -46,7 +46,7 @@ export const SortableVideoCard: React.FC<SortableVideoCardProps> = ({
       ref={setNodeRef}
       video={video}
       style={style}
-      className={isDragging ? 'dragging' : ''}
+      className={`playlist-card ${isDragging ? 'dragging' : ''}`}
       dragHandleProps={{
         ...listeners,
         ...attributes,
