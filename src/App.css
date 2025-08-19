@@ -232,6 +232,16 @@
   margin-bottom: 12px;
 }
 
+.playlist-card .card-title {
+  display: block !important;
+  visibility: visible !important;
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-size: 14px;
+  line-height: 1.3;
+  color: #333;
+}
+
 .card-thumbnail {
   width: 100%;
   min-height: 80px; /* Minimum height for fallback cases */

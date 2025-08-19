@@ -28,6 +28,15 @@ export const VideoCardBase = forwardRef<HTMLDivElement, VideoCardBaseProps>(({
   isSelected = false,
   onToggleSelection
 }, ref) => {
+  // Debug logging for playlist cards
+  if (sourceType === 'playlist') {
+    console.log('Playlist video card:', { 
+      title: video.title, 
+      filename: video.filename, 
+      id: video.id,
+      sourceType 
+    });
+  }
   const { dataUrl: thumbnailDataUrl, isLoading: thumbnailLoading, error: thumbnailError, aspectRatio, reload: reloadThumbnail } = useThumbnail(video);
   const [imageLoadError, setImageLoadError] = React.useState(false);
   
@@ -154,7 +163,7 @@ export const VideoCardBase = forwardRef<HTMLDivElement, VideoCardBaseProps>(({
         </div>
         
         <div className="card-title">
-          {video.title}
+          {video.title || video.filename || 'Untitled'}
         </div>
         
         <div className="card-metadata">
