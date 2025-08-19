@@ -26,6 +26,12 @@ export const PlaylistColumn: React.FC<PlaylistColumnProps> = ({
   dragOverId,
   insertionIndex
 }) => {
+  const formatTotalDuration = (videos: Video[]): string => {
+    const totalSeconds = videos.reduce((sum, video) => sum + video.duration, 0);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = Math.round(totalSeconds % 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
   const [showDropdown, setShowDropdown] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(playlist.name);
@@ -153,7 +159,12 @@ export const PlaylistColumn: React.FC<PlaylistColumnProps> = ({
             }}
           />
         ) : (
-          <span>{playlist.name} ({videos.length})</span>
+          <span>
+            {playlist.name} ({videos.length})
+            {videos.length > 0 && (
+              <span style={{ opacity: 0.7 }}> • {formatTotalDuration(videos)}</span>
+            )}
+          </span>
         )}
         
         <div className="dropdown-container" ref={dropdownRef} style={{ position: 'relative' }}>

@@ -79,7 +79,7 @@ export const VideoCardBase = forwardRef<HTMLDivElement, VideoCardBaseProps>(({
 
   const formatDuration = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
+    const remainingSeconds = Math.round(seconds % 60);
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
@@ -153,7 +153,7 @@ export const VideoCardBase = forwardRef<HTMLDivElement, VideoCardBaseProps>(({
           )}
         </div>
         
-        <div className={`card-title ${isCompact ? 'repository-title' : ''}`}>
+        <div className="card-title">
           {video.title}
         </div>
         
