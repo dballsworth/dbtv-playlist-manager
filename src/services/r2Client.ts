@@ -383,11 +383,18 @@ export class R2Client {
     }
   ): Promise<{ success: boolean; error?: string; etag?: string; publicUrl?: string }> {
     if (!this.s3Client || !this.config) {
-      return { success: false, error: 'Client not configured' };
+      return { success: false, error: 'R2 client not configured. Please check your R2 settings.' };
     }
 
     try {
       console.log(`📦 Uploading blob to R2: ${key} (${blob.size} bytes)`);
+      console.log('R2 Configuration:', {
+        endpoint: this.config.endpoint,
+        bucket: this.config.bucketName,
+        region: this.config.region,
+        hasAccessKey: !!this.config.accessKeyId,
+        hasSecretKey: !!this.config.secretAccessKey
+      });
       
       // Convert blob to Uint8Array for S3 upload
       const arrayBuffer = await blob.arrayBuffer();
@@ -401,6 +408,7 @@ export class R2Client {
         Metadata: options?.metadata,
       });
 
+      console.log('Sending upload command to R2...');
       const response = await this.s3Client.send(command);
       
       // Generate public URL if possible
@@ -418,9 +426,32 @@ export class R2Client {
       };
     } catch (error) {
       console.error(`❌ Failed to upload blob to R2 (${key}):`, error);
+      console.error('Full error details:', {
+        name: (error as any)?.name,
+        code: (error as any)?.$metadata?.httpStatusCode,
+        message: error instanceof Error ? error.message : 'Unknown',
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      
+      // Provide more helpful error messages
+      let errorMessage = 'Upload failed';
+      if (error instanceof Error) {
+        if (error.message.includes('Failed to fetch') || error.message.includes('NetworkingError')) {
+          errorMessage = 'Network error: Unable to connect to R2. Check your internet connection and R2 endpoint configuration.';
+        } else if (error.message.includes('CORS')) {
+          errorMessage = 'CORS error: Check your R2 bucket CORS configuration to allow uploads from this domain.';
+        } else if (error.message.includes('AccessDenied')) {
+          errorMessage = 'Access denied: Check your R2 credentials and bucket permissions.';
+        } else if (error.message.includes('NoSuchBucket')) {
+          errorMessage = `Bucket '${this.config?.bucketName}' not found. Check your bucket name in settings.`;
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Upload failed',
+        error: errorMessage,
       };
     }
   }

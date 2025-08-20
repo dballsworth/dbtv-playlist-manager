@@ -65,19 +65,63 @@ export class ZipService {
   }
 
   /**
-   * Downloads a thumbnail as blob (simpler, fallback to original method)
+   * Downloads a thumbnail as blob with multiple fallback methods (similar to video fetching)
    */
-  private static async fetchThumbnailAsBlob(url: string): Promise<Blob> {
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
+  private static async fetchThumbnailAsBlob(video: Video): Promise<Blob> {
+    const thumbnailKey = video.r2Storage?.thumbnailKey;
+    const thumbnailUrl = video.r2Storage?.thumbnailUrl;
+    const filename = video.filename;
+    
+    console.log(`🖼️ Attempting to download thumbnail for: ${filename}`);
+
+    // Method 1: Try direct R2 download using AWS SDK (avoids CORS)
+    if (thumbnailKey && r2Client.isConfigured()) {
+      console.log(`🔧 Method 1: Trying direct R2 download for thumbnail: ${thumbnailKey}`);
+      try {
+        const result = await r2Client.getObject(thumbnailKey);
+        if (result.success && result.data) {
+          console.log(`✅ Successfully downloaded thumbnail via R2 SDK: ${result.data.length} bytes`);
+          return new Blob([result.data], { type: 'image/jpeg' });
+        } else {
+          throw new Error(result.error || 'Failed to get thumbnail from R2');
+        }
+      } catch (error) {
+        console.warn(`❌ R2 SDK method failed for thumbnail:`, error);
       }
-      return await response.blob();
-    } catch (error) {
-      console.error('Error fetching thumbnail:', url, error);
-      throw error;
     }
+
+    // Method 2: Try public URL if available (may fail due to CORS)
+    if (thumbnailUrl) {
+      console.log(`📡 Method 2: Trying public URL for thumbnail: ${thumbnailUrl}`);
+      try {
+        const response = await fetch(thumbnailUrl);
+        console.log(`📡 Public URL response for thumbnail:`, {
+          status: response.status,
+          statusText: response.statusText,
+          contentType: response.headers.get('content-type')
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Public URL fetch failed: ${response.status} ${response.statusText}`);
+        }
+        
+        const blob = await response.blob();
+        console.log(`✅ Successfully downloaded thumbnail via public URL: ${blob.size} bytes`);
+        
+        // Validate that we got a proper image file
+        if (blob.size < 100) {
+          console.warn(`⚠️ Thumbnail suspiciously small (${blob.size} bytes), may be invalid`);
+          throw new Error(`Thumbnail too small: ${blob.size} bytes`);
+        }
+        
+        return blob;
+      } catch (error) {
+        console.warn(`❌ Public URL method failed for thumbnail:`, error);
+      }
+    }
+
+    // If all methods failed
+    throw new Error(`All download methods failed for thumbnail of ${filename}`);
   }
 
   /**
@@ -160,10 +204,10 @@ export class ZipService {
 
       // Add thumbnail file
       const thumbnailFilename = this.getThumbnailFilename(video.filename);
-      if (video.r2Storage?.thumbnailUrl) {
+      if (video.r2Storage?.thumbnailUrl || video.r2Storage?.thumbnailKey) {
         try {
           onProgress?.({ completed: completedFiles, total: totalFiles, currentFile: thumbnailFilename });
-          const thumbnailBlob = await this.fetchThumbnailAsBlob(video.r2Storage.thumbnailUrl);
+          const thumbnailBlob = await this.fetchThumbnailAsBlob(video);
           thumbnailsDir.file(thumbnailFilename, thumbnailBlob);
           console.log(`✅ Added thumbnail ${thumbnailFilename}: ${thumbnailBlob.size} bytes`);
           completedFiles++;
@@ -174,7 +218,7 @@ export class ZipService {
           completedFiles++;
         }
       } else {
-        console.warn(`No thumbnail URL for video: ${video.filename}`);
+        console.warn(`No thumbnail URL or key for video: ${video.filename}`);
         thumbnailsDir.file(thumbnailFilename, `# Placeholder thumbnail for ${video.filename}`);
         completedFiles++;
       }
@@ -245,10 +289,14 @@ export class ZipService {
 
       // Upload to R2
       if (!r2Client.isConfigured()) {
-        throw new Error('R2 client not configured');
+        console.error('R2 client not configured. Please check your R2 settings in the Settings tab.');
+        throw new Error('R2 storage is not configured. Please configure R2 settings first.');
       }
 
       const r2Key = this.generateR2Key(packageName);
+      console.log(`🚀 Starting R2 upload for key: ${r2Key}`);
+      console.log(`📊 Package size: ${(zipBlob.size / (1024 * 1024)).toFixed(2)} MB`);
+      
       onProgress?.({ completed: 80, total: 100, currentFile: 'Uploading to R2 storage...' });
 
       const uploadResult = await r2Client.uploadBlob(r2Key, zipBlob, {
@@ -262,6 +310,7 @@ export class ZipService {
       });
 
       if (!uploadResult.success) {
+        console.error('R2 upload failed with error:', uploadResult.error);
         throw new Error(uploadResult.error || 'Failed to upload to R2');
       }
 
